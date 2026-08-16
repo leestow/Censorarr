@@ -1,6 +1,8 @@
 # Runtime state and secrets
-config/
-work/
+config/*
+!config/.gitkeep
+work/*
+!work/.gitkeep
 .env
 .env.*
 !*.example
