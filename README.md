@@ -84,6 +84,14 @@ Never commit runtime configuration or secrets. In particular, do not commit:
 
 The repository `.gitignore` excludes common runtime and secret locations, but you should still review changes before pushing them publicly.
 
+## Acknowledgements
+
+Censorarr's transcription engine is built on faster-whisper, created by Guillaume Klein and maintained with contributions from the faster-whisper community. Its CTranslate2-based implementation of Whisper provides the fast, memory-efficient speech-to-text foundation that makes Censorarr's detection pipeline possible.
+
+A sincere thank-you to Guillaume Klein and everyone who has contributed to faster-whisper for making their work available to the open-source community.
+
+faster-whisper itself is based on OpenAI's Whisper speech-recognition model, so Censorarr also gratefully acknowledges the original Whisper project and its contributors.
+
 ## Project status
 
 Censorarr is under active development. Bug reports, compatibility reports, and contributions are welcome through GitHub Issues and Pull Requests.
