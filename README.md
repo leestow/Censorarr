@@ -1,2 +1,2 @@
 # Censorarr
-Remove curse words/bad language from movies and tv shows.
+Self-hosted automated clean-audio generation for movies and TV shows using Whisper, subtitle assistance, and optional GPU acceleration.
