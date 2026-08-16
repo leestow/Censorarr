@@ -1,0 +1,233 @@
+# Censorarr v1.6.3 - Movies + TV Shows watcher + Web Manager
+media_roots:
+  - /media
+extensions: [.mkv, .mp4, .m4v]
+scan_interval_seconds: 120
+stable_seconds: 300
+process_existing: true
+dry_run: true
+
+# Fresh installations remain idle until the guided setup wizard is finished.
+setup:
+  completed: false
+  wizard_version: 1
+
+marker:
+  enabled: true
+  filename: .censorarr.done.json
+
+rating_filter:
+  enabled: false
+  source: plex
+  minimum: PG-13
+  plex_url: http://PLEX_SERVER_IP:32400
+  plex_library: Movies
+  plex_token: ""   # Legacy fallback. Prefer Settings → Plex; GUI secrets are stored separately.
+  plex_path_mappings:
+    - from: /volume1/Movies
+      to: /media
+  include_unrated: false
+
+# TV Shows are scanned independently. TV-14 is the default equivalent of PG-13+.
+tv:
+  enabled: true
+  media_roots:
+    - /tv
+  rating_filter:
+    enabled: false
+    source: plex
+    minimum: TV-14
+    plex_url: ""       # Blank = inherit the Movies Plex URL above.
+    plex_library: TV Shows
+    plex_token: ""     # Legacy field; the GUI-saved/shared Plex token is preferred.
+    plex_path_mappings:
+      - from: /volume1/TV Shows
+        to: /tv
+    include_unrated: false
+
+whisper:
+  # local = Synology CPU; remote = GPU worker only; auto = GPU worker with CPU fallback.
+  backend: local
+  model: small
+  device: cpu
+  compute_type: int8
+  language: en
+  beam_size: 5
+  vad_filter: false
+  condition_on_previous_text: false
+  remote:
+    # v1.3.1: backend is the source of truth; legacy remote.enabled is ignored.
+    url: http://GPU_WORKER_IP:9000
+    token: ""        # Legacy fallback. Prefer Settings → Remote GPU worker.
+    model: small.en
+    timeout_seconds: 1800
+    fallback_to_local: true
+
+# Cached 16 kHz transcription/rescue audio is reused after a cancelled or failed job.
+# Successful jobs remove the cache by default.
+audio_cache:
+  enabled: true
+  directory: /work/audio-cache
+  keep_after_success: false
+
+profanity:
+  file: /config/en.json
+  min_severity: 3
+  # Legacy/fallback padding used when Precision Mute Alignment is disabled.
+  padding_before_ms: 120
+  padding_after_ms: 160
+  max_word_window: 4
+
+# Tightens censor timing without adding another ML model. It protects neighboring Whisper words and
+# snaps the safety margin to nearby low-energy waveform frames when possible.
+precision_alignment:
+  enabled: true
+  padding_before_ms: 25
+  padding_after_ms: 40
+  edge_search_ms: 120
+  neighbor_guard_ms: 12
+  energy_threshold_ratio: 0.22
+  frame_ms: 5
+
+rescue:
+  enabled: true
+  confidence_trigger: 0.18
+  fuzzy_confidence_ceiling: 0.70
+  fuzzy_similarity: 0.72
+  window_before_seconds: 1.5
+  window_after_seconds: 1.5
+  merge_gap_seconds: 0.75
+  max_windows: 250
+  prefer_center_channel: true
+  prompt: >-
+    Transcribe the dialogue verbatim, including profanity. Possible words may include:
+    asshole, ass, fuck, fucking, fucker, shit, shitty, bitch, bastard, damn,
+    goddamn, dick, cunt, motherfucker. Do not censor or euphemize spoken words.
+  mild_evidence: [ass]
+
+# Subtitle Assist augments Whisper; it never suppresses a profanity Whisper already found.
+subtitle_assist:
+  enabled: true
+  use_embedded: true
+  use_external: true
+  ignore_forced_only: true
+  accept_untagged_english: true
+  use_dialogue_as_rescue_prompt: true
+  whisper_overrides_omissions: true
+  # Full-text alignment searches surrounding subtitle dialogue against the whole Whisper transcript.
+  # Subtitle timestamps become hints rather than truth, so shifted/drifting subtitles can still clarify words.
+  global_text_alignment: true
+  global_context_cues: 1
+  global_minimum_ratio: 0.58
+  global_minimum_anchor_words: 3
+  alignment_tolerance_seconds: 2.0
+  minimum_alignment_ratio: 0.45
+  bazarr:
+    enabled: false
+    url: http://BAZARR_SERVER_IP:6767
+    api_key: ""       # Legacy fallback. Prefer Settings → Bazarr.
+    path_mappings:
+      # CHANGE 'from' to the movie root Bazarr/Radarr reports.
+      - from: /movies
+        to: /media
+    tv_path_mappings:
+      # CHANGE 'from' to the TV series root Bazarr/Sonarr reports.
+      - from: /tv
+        to: /tv
+    wait_for_download: true
+    timeout_minutes: 30
+    check_interval_seconds: 30
+    retry_seconds: 300
+    max_attempts: 3
+    cache_seconds: 300
+
+# Optional Sonarr/Radarr metadata integrations used by the Censorarr Media pages.
+# API keys are configured in Settings → Radarr & Sonarr. Environment variables remain optional fallbacks.
+arr_integrations:
+  radarr:
+    enabled: false
+    url: http://RADARR_SERVER_IP:7878
+    api_key: ""
+    path_mappings:
+      - from: /movies
+        to: /media
+    cache_seconds: 300
+  sonarr:
+    enabled: false
+    url: http://SONARR_SERVER_IP:8989
+    api_key: ""
+    path_mappings:
+      - from: /tv
+        to: /tv
+    cache_seconds: 300
+
+# When enabled, analysis stops at the review screen. Approving uses the existing
+# analysis report, so the movie does not need to be transcribed again.
+review_mode:
+  enabled: false
+
+clean_track:
+  title: English - CLEAN
+  language: eng
+  # Plex generally chooses the first preferred-language audio stream rather than the MKV default flag.
+  place_clean_first: true
+  make_default: true
+  replace_existing_clean: true
+  reprocess_existing_clean: false
+  codec: auto
+
+# Automatic jobs only. Manual Process/Reprocess from the GUI can still run outside the schedule.
+processing_schedule:
+  enabled: false
+  start: "00:00"
+  end: "23:59"
+  # Monday=0 ... Sunday=6
+  days: [0, 1, 2, 3, 4, 5, 6]
+
+plex_activity:
+  # Prevents a NEW automatic movie from starting while Plex has active video playback.
+  # It does not kill/suspend a movie already being transcribed.
+  pause_when_streaming: false
+  refresh_after_processing: false
+
+worker:
+  # v1.2 deliberately serializes media modification for NAS safety.
+  max_concurrent_jobs: 1
+
+safety:
+  validate_output: true
+  duration_tolerance_seconds: 2.0
+  preserve_owner_mode: true
+  backup_original: false
+
+reports:
+  directory: /config/reports
+  keep_transcript_json: true
+  keep_rescue_details: true
+
+# Optional notifications. Provider secrets can be saved from the Censorarr GUI.
+notifications:
+  enabled: false
+  events: [completed, failed, queue-finished]
+  webhook:
+    enabled: false
+    type: discord       # discord or generic
+    url: ""
+  pushover:
+    enabled: false
+    app_token: ""     # Legacy fallback; prefer GUI secret field.
+    user_key: ""      # Legacy fallback; prefer GUI secret field.
+  email:
+    enabled: false
+    host: ""
+    port: 587
+    username: ""
+    password: ""      # Legacy fallback; prefer GUI secret field.
+    from: ""
+    to: ""
+    starttls: true
+    ssl: false
+
+logging:
+  level: INFO
+  file: /config/censorarr.log

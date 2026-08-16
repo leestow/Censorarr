@@ -1,0 +1,21 @@
+services:
+  censorarr-gpu-worker:
+    build: .
+    container_name: censorarr-gpu-worker
+    restart: unless-stopped
+    ports:
+      - "9000:9000"
+    environment:
+      ASR_MODEL: "small.en"
+      # GTX 10-series / Pascal CC 6.1: CTranslate2 optimizes INT8 with FP32 accumulation.
+      ASR_COMPUTE_TYPE: "int8_float32"
+      ASR_WORKER_TOKEN: "CHANGE_ME_TO_THE_SAME_LONG_RANDOM_TOKEN_AS_MAIN_CENSORARR"
+      ASR_MODEL_DIR: "/models"
+      # Long files are transcribed in bounded chunks to prevent host-RAM OOMs.
+      ASR_CHUNK_SECONDS: "600"
+      ASR_CHUNK_OVERLAP_SECONDS: "2"
+    volumes:
+      - ./models:/models
+      # Fast code updates: mount worker source from the LXC; no image rebuild needed.
+      - ./app:/worker:ro
+    gpus: all

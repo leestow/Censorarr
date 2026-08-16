@@ -1,0 +1,16 @@
+CENSORARR v1.6.3 — FIRST INSTALL
+
+1. Copy or clone the Censorarr source to your Docker host.
+2. Edit docker-compose.yml and set your host-side Movies/TV paths, PUID, PGID, timezone, and optional integration credentials.
+3. Start the project:
+     docker compose up -d --build
+4. Open the web UI on the configured host port.
+5. Complete the Setup Wizard.
+6. Begin in Dry Run mode and test a small number of files before Apply mode.
+
+Persistent runtime data belongs under /config and /work.
+The default log is /config/censorarr.log.
+The default completion marker is .censorarr.done.json.
+
+Self-test:
+  docker exec -it censorarr python /app/selftest.py

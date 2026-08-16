@@ -1,0 +1,13 @@
+CENSORARR v1.6.3 — FAST SOURCE UPDATE
+
+For an existing Censorarr installation that bind-mounts its app directory:
+
+1. Back up your current app files and config.
+2. Replace the app files with the matching v1.6.3 files.
+3. Restart the container:
+     docker restart censorarr
+4. Hard-refresh the browser (Ctrl+F5).
+
+For a normal source checkout, prefer:
+  git pull
+  docker compose up -d --build

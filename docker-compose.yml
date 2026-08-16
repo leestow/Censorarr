@@ -1,0 +1,52 @@
+services:
+  censorarr:
+    build: .
+    container_name: censorarr
+    restart: unless-stopped
+    ports:
+      # Change ONLY the left side if you want a different browser port.
+      # Example: "9090:8787" -> http://NAS-IP:9090
+      - "8087:8787"
+    environment:
+      TZ: Etc/UTC
+      CENSORARR_CONFIG: /config/config.yaml
+
+      # Run Censorarr with the same UID/GID as the Synology account that owns
+      # or can write to your Movies/TV shares. Find them with: id YOUR_USERNAME
+      PUID: "1000"
+      PGID: "1000"
+      UMASK: "002"
+
+      # Optional. Needed only if you enable Plex features (rating filters, playback pause, refresh).
+      PLEX_TOKEN: ""
+
+      # Optional. Required only if Subtitle Assist should request missing subtitles from Bazarr.
+      BAZARR_API_KEY: ""  # Optional: add your Bazarr API key
+
+      # Optional. Must match ASR_WORKER_TOKEN on the Proxmox GPU worker.
+      ASR_WORKER_TOKEN: "CHANGE_ME_TO_A_LONG_RANDOM_TOKEN"
+
+      # Optional LAN web login. Leave WEB_PASSWORD blank for no login.
+      WEB_USERNAME: "admin"
+      WEB_PASSWORD: ""
+
+      # Optional notification secrets.
+      PUSHOVER_APP_TOKEN: ""
+      PUSHOVER_USER_KEY: ""
+      SMTP_PASSWORD: ""
+    volumes:
+      # Censorarr application files - allows fast upgrades without rebuilding image
+      - /volume1/docker/censorarr/app:/app
+      - /volume1/docker/censorarr/en.json:/app/en.json:ro
+      - /volume1/docker/censorarr/config.example.yaml:/app/config.example.yaml:ro
+      - /volume1/docker/censorarr/config:/config
+      - /volume1/docker/censorarr/work:/work
+      # CHANGE LEFT SIDES to your complete Movies and TV Shows shared folders.
+      - /volume1/Movies:/media:rw
+      - /volume1/TV Shows:/tv:rw
+    healthcheck:
+      test: ["CMD", "python", "/app/healthcheck.py"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 120s

@@ -1,0 +1,16 @@
+CENSORARR GPU WORKER v1.6.3 — UPDATE
+
+From an existing git/source checkout:
+
+  cd /opt/censorarr-gpu
+  docker compose down
+  docker compose up -d --build
+
+If you use the bind-mounted ./app -> /worker layout, replacing the app source and restarting the container is sufficient for code-only worker updates:
+
+  docker restart censorarr-gpu-worker
+
+Verify:
+
+  docker compose logs --tail=50
+  curl -H 'X-Censorarr-Token: YOUR_TOKEN' http://127.0.0.1:9000/health

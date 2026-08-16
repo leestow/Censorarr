@@ -1,0 +1,9 @@
+models/
+.env
+.env.*
+__pycache__/
+*.py[cod]
+*.log
+backups/
+*.bak
+*.bak-*
