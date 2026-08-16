@@ -1,55 +1,46 @@
-# Censorarr 1.6.2
+# Censorarr 1.6.3
 
-Censorarr is a self-hosted clean-audio manager for movies and TV shows. It detects configured profanity, keeps the original media streams, and adds or replaces a separate **CLEAN** audio track.
+Censorarr is a self-hosted clean-audio manager for movies and TV shows. It detects configured profanity, preserves the original media streams, and adds or replaces a separate **CLEAN** audio track.
 
 ## What is required?
 
 Only two things are required:
 
-1. A Movies and/or TV media folder mounted into Censorarr.
-2. A transcription engine: the local CPU, or the optional **Censorarr GPU Worker**.
+1. A Movies and/or TV Shows folder mounted into Censorarr.
+2. A transcription engine: local CPU transcription, or the optional **Censorarr GPU Worker**.
 
 Everything else is optional:
 
-- **Plex** — adds rating-based filtering, playback-aware start gating, and library refreshes.
-- **Radarr** — adds richer movie posters and metadata. Without it, the Movies page reads the local Movies folder directly.
-- **Sonarr** — adds richer TV/episode metadata. Without it, the TV Shows page reads the local TV folder directly.
-- **Bazarr** — can request missing text subtitles automatically. Local and embedded subtitle assistance works without Bazarr.
-- **GPU Worker** — accelerates Whisper transcription. Censorarr can run transcription locally on CPU instead.
+- **Plex** — rating-based filtering, playback-aware start gating, and library refreshes.
+- **Radarr** — richer movie metadata and posters. Without Radarr, Censorarr reads the Movies folder directly.
+- **Sonarr** — richer TV metadata. Without Sonarr, Censorarr reads the TV Shows folder directly.
+- **Bazarr** — can request missing text subtitles automatically. Local/embedded subtitle assistance works without Bazarr.
+- **GPU Worker** — accelerates transcription on an NVIDIA GPU. Censorarr can use CPU transcription without it.
 
-## First-run Setup Wizard
+## Guided setup
 
-Fresh installations open a guided Setup Wizard automatically and remain idle until setup is completed. The wizard can be reopened later from **Settings → Setup Wizard**.
+Fresh installations open a guided Setup Wizard automatically and remain idle until setup is completed. The wizard can be reopened from **Settings → Setup Wizard**.
 
-It walks through:
+It walks through media folders, Dry Run/Apply mode, CPU vs GPU transcription, optional Plex, optional Radarr/Sonarr, subtitle assistance/Bazarr, and a final review.
 
-1. Movies and TV folders, plus Dry Run / Apply mode.
-2. Local CPU vs remote GPU transcription.
-3. Optional Plex setup.
-4. Optional Radarr and Sonarr setup.
-5. Subtitle assistance and optional Bazarr setup.
-6. A final review before automatic processing is enabled.
-
-**Start with Dry Run and test a small number of files before switching to Apply mode.**
+> Start with **Dry Run** and test a small number of files before switching to Apply mode.
 
 ## Installation choices
 
-| What you want | What to install |
+| Goal | Install |
 |---|---|
 | Censorarr using CPU transcription | Main Censorarr project only |
 | Censorarr with NVIDIA GPU acceleration | Main Censorarr + GPU Worker |
-| GPU server for an existing Censorarr install | `gpu-worker/` only |
-| No Plex / Radarr / Sonarr / Bazarr | Main Censorarr standalone |
+| GPU server for an existing Censorarr installation | `gpu-worker/` only |
+| No Plex/Radarr/Sonarr/Bazarr | Main Censorarr standalone |
 
 ### Main Censorarr
 
-See [`INSTALL-FIRST.txt`](INSTALL-FIRST.txt), [`INSTALL-SOURCE.md`](INSTALL-SOURCE.md), and [`README-SYNOLOGY.md`](README-SYNOLOGY.md).
-
-The included `docker-compose.yml` is a starting point. Change the host-side media paths, PUID/PGID, and any optional integration settings for your environment.
+See [`INSTALL-SOURCE.md`](INSTALL-SOURCE.md) and [`README-SYNOLOGY.md`](README-SYNOLOGY.md). The included `docker-compose.yml` is a starting point; change host-side media paths, PUID/PGID, timezone, and any optional integration credentials for your environment.
 
 ### GPU Worker only
 
-The GPU worker is a self-contained Docker project inside [`gpu-worker/`](gpu-worker/).
+The GPU worker is fully self-contained under [`gpu-worker/`](gpu-worker/).
 
 ```bash
 git clone https://github.com/leestow/Censorarr.git
@@ -58,31 +49,17 @@ cd Censorarr/gpu-worker
 docker compose up -d --build
 ```
 
-See [`gpu-worker/README.md`](gpu-worker/README.md) for the full GPU-worker setup.
+See [`gpu-worker/README.md`](gpu-worker/README.md).
 
 ## How CLEAN audio works
 
-Censorarr preserves the original media streams and creates a separate profanity-muted audio track. Reprocessing replaces the existing CLEAN track instead of stacking additional CLEAN tracks.
+Censorarr preserves the original video/audio/subtitle streams and creates a separate profanity-muted audio track. Reprocessing replaces an existing CLEAN track instead of stacking additional copies.
 
 Whisper performs the primary transcription. Censorarr can also use subtitle evidence and targeted rescue passes to improve recall. No speech-recognition system can guarantee 100% detection, so review/test important material before relying on automated processing.
 
-## Safety
+## Security
 
-Censorarr writes a temporary output, validates it, and only then replaces the original pathname. Keep backups of important media and begin with **Dry Run** when evaluating a new installation.
-
-## Credentials
-
-Never commit runtime configuration or secrets. In particular, do not commit:
-
-- `config/`
-- `secrets.json`
-- `.env` files
-- API tokens
-- logs/reports
-- Whisper models
-- backup snapshots containing configuration
-
-The repository `.gitignore` excludes common runtime and secret locations, but you should still review changes before pushing them publicly.
+Never commit runtime configuration or secrets. In particular, do not commit `config/`, `.env` files, `secrets.json`, API tokens, logs, reports, model caches, or backup snapshots containing configuration. The included `.gitignore` excludes common secret/runtime locations.
 
 ## Project status
 
