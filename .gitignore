@@ -1,0 +1,32 @@
+# Runtime state and secrets
+config/
+work/
+.env
+.env.*
+!*.example
+secrets.json
+config.yaml
+*.log
+*.pid
+*.flag
+
+# Models / caches
+models/
+__pycache__/
+*.py[cod]
+.cache/
+
+# Local backups / archives
+backups/
+backup-*/
+*.bak
+*.bak-*
+*.zip
+*.tar
+*.tar.gz
+
+# OS/editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
