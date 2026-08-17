@@ -220,13 +220,30 @@ jobs:
         run: |
           $tag = "v$env:CENSORARR_APP_VERSION"
           $asset = "windows/dist-installer/Censorarr-Setup-$env:CENSORARR_APP_VERSION.exe"
+          $assetName = Split-Path $asset -Leaf
 
           gh release view $tag *> $null
           if ($LASTEXITCODE -ne 0) {
-            $notes = "Native Windows 11 x64 installer for Censorarr $env:CENSORARR_APP_VERSION.`n`nInstalls under Program Files, stores persistent data under C:\ProgramData\Censorarr, bundles FFmpeg/FFprobe and the Visual C++ runtime, and supports local CPU transcription or the optional remote Censorarr GPU Worker.`n`nDocker/Synology users can continue using the source and compose files from this release."
+            $notes = @"
+          Censorarr $env:CENSORARR_APP_VERSION
+
+          Native Windows 11 x64 installer:
+          - Installs Censorarr under Program Files
+          - Stores persistent data under C:\ProgramData\Censorarr
+          - Bundles FFmpeg/FFprobe and the Visual C++ runtime
+          - Supports local CPU transcription or the optional remote Censorarr GPU Worker
+
+          Docker/Synology users can continue using the source and compose files from this release.
+          "@
             gh release create $tag --target $env:GITHUB_SHA --title "Censorarr v$env:CENSORARR_APP_VERSION" --notes $notes
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           }
 
-          gh release upload $tag $asset --clobber
+          $existingAssets = @(gh release view $tag --json assets --jq '.assets[].name')
+          if ($existingAssets -contains $assetName) {
+            Write-Host "$assetName is already published on $tag; leaving the versioned Release asset unchanged."
+            exit 0
+          }
+
+          gh release upload $tag $asset
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
