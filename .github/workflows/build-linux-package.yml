@@ -186,7 +186,8 @@ jobs:
 
           dpkg-deb --build --root-owner-group "$pkg" "$out/$CENSORARR_DEB_NAME"
           dpkg-deb --info "$out/$CENSORARR_DEB_NAME"
-          dpkg-deb --contents "$out/$CENSORARR_DEB_NAME" | head -100
+          dpkg-deb --contents "$out/$CENSORARR_DEB_NAME" > "$RUNNER_TEMP/deb-contents.txt"
+          sed -n '1,100p' "$RUNNER_TEMP/deb-contents.txt"
 
       - name: Install and smoke test Debian package
         shell: bash
