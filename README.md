@@ -105,3 +105,30 @@ Censorarr is released under the **GNU General Public License v3.0 (GPL-3.0)**. S
 ## Project status
 
 Censorarr is under active development. Bug reports, compatibility reports, and contributions are welcome through GitHub Issues and Pull Requests.
+
+<!-- CENSORARR-SCREENSHOTS -->
+## Screenshots
+
+### Dashboard
+
+Monitor current processing, queue status, system resources, GPU-worker progress, and live Censorarr/GPU logs from one place.
+
+![Censorarr dashboard](docs/screenshots/dashboard.jpg)
+
+### First-run Setup Wizard
+
+Fresh installations include a guided wizard for media folders, transcription, and optional integrations.
+
+![Censorarr Setup Wizard](docs/screenshots/setup-wizard.jpg)
+
+### Movies library
+
+Browse the movie library with posters, quality information, ratings, and Censorarr processing status.
+
+![Censorarr Movies library](docs/screenshots/movies-library.jpg)
+
+### Movie details
+
+Open an individual movie to see its metadata, file information, CLEAN status, and processing actions.
+
+![Censorarr movie details](docs/screenshots/movie-details.jpg)
