@@ -8,6 +8,13 @@
 - A permission failure retries automatically when the runtime identity changes or when the file later becomes readable, without repeatedly invoking ffprobe while access is still blocked.
 - Main app and GPU worker now report version `1.6.5`.
 
+### Log viewer compatibility hotfix (2026-08-16)
+
+- The container entrypoint now keeps `/config/censorarr.log` as a dashboard compatibility alias to the active `logging.file` target from `config.yaml`.
+- Existing upgrades that still use `/config/plexclean.log` now show the correct live Censorarr log without requiring the user to rewrite the persistent configuration first.
+- Custom log paths are also supported at container startup, and Tail / Live Stream / Download / Clear continue to operate through the dashboard alias.
+- If a non-empty standalone `/config/censorarr.log` already exists while another log target is configured, it is preserved as `/config/censorarr.log.before-alias` before the alias is created.
+
 ## 1.6.4
 
 - Added Synology DSM ACL compatibility mode (`CENSORARR_SYNOLOGY_COMPAT_MODE=auto|true|false`).

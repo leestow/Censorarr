@@ -35,6 +35,52 @@ mkdir -p /config /work
 chown -R "$PUID:$PGID" /config /work
 chmod 2775 /config /work 2>/dev/null || true
 
+# The web dashboard historically reads /config/censorarr.log, while the worker honors
+# logging.file from config.yaml. Keep /config/censorarr.log as a compatibility alias to
+# the configured log target so upgrades from /config/plexclean.log and custom log paths
+# are visible in Tail / Live Stream / Download / Clear without rewriting user config.
+CONFIG_FILE="${CENSORARR_CONFIG:-/config/config.yaml}"
+LOG_ALIAS="/config/censorarr.log"
+CONFIGURED_LOG="$LOG_ALIAS"
+if [ -f "$CONFIG_FILE" ]; then
+  CONFIGURED_LOG="$(python - "$CONFIG_FILE" <<'PY'
+import sys
+from pathlib import Path
+try:
+    import yaml
+    cfg = yaml.safe_load(Path(sys.argv[1]).read_text(encoding="utf-8")) or {}
+    raw = str((cfg.get("logging") or {}).get("file") or "/config/censorarr.log").strip()
+    print(raw or "/config/censorarr.log")
+except Exception:
+    print("/config/censorarr.log")
+PY
+)"
+fi
+
+case "$CONFIGURED_LOG" in
+  /*) LOG_TARGET="$CONFIGURED_LOG" ;;
+  *) LOG_TARGET="/app/$CONFIGURED_LOG" ;;
+esac
+
+if [ "$LOG_TARGET" != "$LOG_ALIAS" ]; then
+  mkdir -p "$(dirname "$LOG_TARGET")" 2>/dev/null || true
+  if [ -e "$LOG_ALIAS" ] || [ -L "$LOG_ALIAS" ]; then
+    if [ ! -L "$LOG_ALIAS" ] && [ -s "$LOG_ALIAS" ]; then
+      LOG_BACKUP="${LOG_ALIAS}.before-alias"
+      if [ ! -e "$LOG_BACKUP" ]; then
+        mv "$LOG_ALIAS" "$LOG_BACKUP"
+        echo "Censorarr log: preserved existing $LOG_ALIAS as $LOG_BACKUP"
+      else
+        rm -f "$LOG_ALIAS"
+      fi
+    else
+      rm -f "$LOG_ALIAS"
+    fi
+  fi
+  ln -s "$LOG_TARGET" "$LOG_ALIAS"
+  echo "Censorarr log: dashboard alias $LOG_ALIAS -> $LOG_TARGET"
+fi
+
 can_user_read_root() {
   gosu "$PUID:$PGID" sh -c '[ -r "$1" ] && [ -x "$1" ] && ls -A "$1" >/dev/null 2>&1' _ "$1"
 }
