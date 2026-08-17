@@ -8,6 +8,14 @@
 - A permission failure retries automatically when the runtime identity changes or when the file later becomes readable, without repeatedly invoking ffprobe while access is still blocked.
 - Main app and GPU worker now report version `1.6.5`.
 
+### Cross-platform folder picker hotfix (2026-08-16)
+
+- Added **Browse…** buttons for the Movies and TV folder fields in both the Setup Wizard and normal Settings.
+- Docker/Synology browsing is constrained to configured/mounted media roots rather than exposing the container filesystem.
+- Native Windows browsing lists available drives and supports local drives, mapped drives, and manually entered UNC network paths.
+- Manual media browsing/processing now uses the configured media roots as its security boundary, allowing native Windows library paths to work instead of assuming `/media` and `/tv`.
+- Settings saves keep Plex, Radarr, Sonarr, and Bazarr mapping destinations synchronized with the selected local Movies/TV roots, including Windows paths.
+
 ### Log viewer compatibility hotfix (2026-08-16)
 
 - The container entrypoint now keeps `/config/censorarr.log` as a dashboard compatibility alias to the active `logging.file` target from `config.yaml`.
