@@ -9,6 +9,7 @@ Censorarr is a self-hosted clean-audio manager for movies and TV shows. It scans
 Choose the guide for your platform:
 
 - **[Windows Installation](Windows-Installation.md)** — native Windows 11 x64 installer, no Docker required.
+- **[Native Linux Installation](Linux-Installation.md)** — Debian/Ubuntu-family x86_64 `.deb`, no Docker required.
 - **[Synology Container Manager](Synology-Container-Manager.md)** — recommended Synology deployment.
 - **[Docker / Linux Installation](Docker-Linux.md)** — standard Docker deployment.
 
@@ -58,6 +59,7 @@ Open a movie for a detailed view of its file, metadata, CLEAN conversion status,
 1. [Quick Start](Quick-Start.md)
 2. Pick your installation guide:
    - [Windows Installation](Windows-Installation.md)
+   - [Native Linux Installation](Linux-Installation.md)
    - [Synology Container Manager](Synology-Container-Manager.md)
    - [Docker / Linux Installation](Docker-Linux.md)
 3. [First-Run Setup Wizard](Setup-Wizard.md)

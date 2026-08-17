@@ -1,0 +1,8 @@
+# Censorarr native Linux service settings
+#
+# Safe default: web UI is local-only. For a headless/LAN server, set
+# CENSORARR_HOST=0.0.0.0 and set a WEB_PASSWORD before exposing port 8087.
+CENSORARR_HOST=127.0.0.1
+CENSORARR_PORT=8087
+WEB_USERNAME=admin
+WEB_PASSWORD=

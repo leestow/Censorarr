@@ -1,0 +1,33 @@
+#!/bin/sh
+set -e
+
+if ! getent group censorarr >/dev/null 2>&1; then
+    addgroup --system censorarr >/dev/null
+fi
+
+if ! id censorarr >/dev/null 2>&1; then
+    adduser \
+        --system \
+        --ingroup censorarr \
+        --home /var/lib/censorarr \
+        --no-create-home \
+        --shell /usr/sbin/nologin \
+        censorarr >/dev/null
+fi
+
+install -d -m 0750 -o censorarr -g censorarr \
+    /var/lib/censorarr \
+    /var/lib/censorarr/config \
+    /var/lib/censorarr/config/models \
+    /var/lib/censorarr/work \
+    /var/lib/censorarr/logs
+
+chmod 0755 /opt/censorarr/Censorarr
+
+if command -v systemctl >/dev/null 2>&1 && [ -d /run/systemd/system ]; then
+    systemctl daemon-reload || true
+    systemctl enable censorarr.service >/dev/null 2>&1 || true
+    systemctl restart censorarr.service || true
+fi
+
+exit 0

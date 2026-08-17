@@ -22,6 +22,47 @@ https://github.com/leestow/Censorarr/releases/latest
 
 See [Windows Installation](Windows-Installation.md) for mapped drives, UNC paths, updates, and troubleshooting.
 
+## Native Linux - Debian/Ubuntu x86_64
+
+Download the latest package from GitHub Releases:
+
+```text
+Censorarr-X.Y.Z-linux-amd64.deb
+```
+
+Install it:
+
+```bash
+sudo apt install ./Censorarr-X.Y.Z-linux-amd64.deb
+```
+
+The package creates the `censorarr` service and dedicated `censorarr` system user.
+
+Check it:
+
+```bash
+sudo systemctl status censorarr
+```
+
+By default the web UI is local-only:
+
+```text
+http://127.0.0.1:8087
+```
+
+Use **Browse...** in the Setup Wizard to select real Linux folders such as `/mnt/media/Movies` and `/mnt/media/TV`.
+
+If your media is group-owned, add the service account to that group and restart:
+
+```bash
+sudo usermod -aG media censorarr
+sudo systemctl restart censorarr
+```
+
+Replace `media` with your actual media group.
+
+For a headless server, see [Native Linux Installation](Linux-Installation.md) for secure LAN access through `/etc/default/censorarr`.
+
 ## Docker / Synology
 
 ### 1. Download or clone Censorarr

@@ -1,0 +1,19 @@
+[Unit]
+Description=Censorarr clean-audio manager
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+User=censorarr
+Group=censorarr
+WorkingDirectory=/var/lib/censorarr
+EnvironmentFile=-/etc/default/censorarr
+Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+ExecStart=/opt/censorarr/Censorarr --background
+Restart=on-failure
+RestartSec=5
+UMask=0002
+
+[Install]
+WantedBy=multi-user.target

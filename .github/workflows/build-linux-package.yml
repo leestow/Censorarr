@@ -1,0 +1,284 @@
+name: Build Linux Package
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - "linux/**"
+      - ".github/workflows/build-linux-package.yml"
+      - "app/**"
+      - "requirements.txt"
+      - "config.example.yaml"
+      - "en.json"
+      - "VERSION"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: linux-package-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Read Censorarr version
+        shell: bash
+        run: |
+          set -euo pipefail
+          app_version="$(tr -d '[:space:]' < VERSION)"
+          test -n "$app_version"
+          case "$app_version" in
+            *.*.*) ;;
+            *) echo "VERSION must be MAJOR.MINOR.PATCH"; exit 1 ;;
+          esac
+          echo "CENSORARR_APP_VERSION=$app_version" >> "$GITHUB_ENV"
+          echo "CENSORARR_DEB_NAME=Censorarr-${app_version}-linux-amd64.deb" >> "$GITHUB_ENV"
+          echo "Building Censorarr $app_version native Linux package"
+
+      - name: Install build and runtime dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg ca-certificates libgomp1
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+          python -m pip install pyinstaller
+
+      - name: Verify native Linux path mapping
+        shell: bash
+        run: |
+          set -euo pipefail
+          export CENSORARR_DATA_DIR="$RUNNER_TEMP/Censorarr-PathTest"
+          python - <<'PY'
+          import os, sys
+          sys.path.insert(0, os.path.abspath("linux"))
+          import linux_launcher as ll
+          expected = str(ll.MODELS_DIR)
+          actual = ll._map_container_path_string("/config/models")
+          print(f"Whisper cache mapping: /config/models -> {actual}")
+          if actual != expected:
+              raise SystemExit(f"Expected {expected!r}, got {actual!r}")
+          if str(ll.CONFIG_FILE) != os.path.join(os.environ["CENSORARR_DATA_DIR"], "config", "config.yaml"):
+              raise SystemExit("Native config mapping is incorrect")
+          print("Native Linux path mapping OK")
+          PY
+
+      - name: Build native Censorarr executable
+        shell: bash
+        run: |
+          set -euo pipefail
+          pyinstaller \
+            --noconfirm \
+            --clean \
+            --onedir \
+            --name Censorarr \
+            --paths app \
+            --paths linux \
+            --distpath linux/dist \
+            --workpath linux/pyinstaller-build \
+            --add-data "app/static:static" \
+            --add-data "config.example.yaml:." \
+            --add-data "en.json:." \
+            --collect-all faster_whisper \
+            --collect-all ctranslate2 \
+            --collect-all tokenizers \
+            --collect-all huggingface_hub \
+            --collect-all av \
+            --hidden-import uvicorn.logging \
+            --hidden-import uvicorn.loops.auto \
+            --hidden-import uvicorn.protocols.http.auto \
+            --hidden-import uvicorn.protocols.websockets.auto \
+            --hidden-import uvicorn.lifespan.on \
+            linux/linux_launcher.py
+
+      - name: Smoke test native executable
+        shell: bash
+        run: |
+          set -euo pipefail
+          export CENSORARR_DATA_DIR="$RUNNER_TEMP/Censorarr-SmokeTest"
+          export CENSORARR_HOST=127.0.0.1
+          export CENSORARR_PORT=8087
+          rm -rf "$CENSORARR_DATA_DIR"
+          ./linux/dist/Censorarr/Censorarr --background > "$RUNNER_TEMP/censorarr-linux-smoke.log" 2>&1 &
+          server_pid=$!
+          cleanup() {
+            kill "$server_pid" >/dev/null 2>&1 || true
+            pkill -f "$GITHUB_WORKSPACE/linux/dist/Censorarr/Censorarr" >/dev/null 2>&1 || true
+          }
+          trap cleanup EXIT
+
+          passed=0
+          for _ in $(seq 1 45); do
+            if curl -fsS "http://127.0.0.1:8087/api/setup/status" > "$RUNNER_TEMP/setup-status.json"; then
+              cat "$RUNNER_TEMP/setup-status.json"
+              passed=1
+              break
+            fi
+            if ! kill -0 "$server_pid" 2>/dev/null; then
+              break
+            fi
+            sleep 1
+          done
+
+          if [ "$passed" -ne 1 ]; then
+            cat "$RUNNER_TEMP/censorarr-linux-smoke.log" || true
+            exit 1
+          fi
+
+      - name: Build Debian package
+        shell: bash
+        run: |
+          set -euo pipefail
+          pkg="$GITHUB_WORKSPACE/linux/package-root"
+          out="$GITHUB_WORKSPACE/linux/dist-package"
+          rm -rf "$pkg" "$out"
+          mkdir -p \
+            "$pkg/DEBIAN" \
+            "$pkg/opt/censorarr" \
+            "$pkg/usr/bin" \
+            "$pkg/lib/systemd/system" \
+            "$pkg/etc/default" \
+            "$pkg/var/lib/censorarr/config/models" \
+            "$pkg/var/lib/censorarr/work" \
+            "$pkg/var/lib/censorarr/logs" \
+            "$out"
+
+          cp -a linux/dist/Censorarr/. "$pkg/opt/censorarr/"
+          cp linux/Censorarr.service "$pkg/lib/systemd/system/censorarr.service"
+          cp linux/censorarr.default "$pkg/etc/default/censorarr"
+          cp linux/postinst "$pkg/DEBIAN/postinst"
+          cp linux/prerm "$pkg/DEBIAN/prerm"
+          cp linux/postrm "$pkg/DEBIAN/postrm"
+          chmod 0755 "$pkg/DEBIAN/postinst" "$pkg/DEBIAN/prerm" "$pkg/DEBIAN/postrm"
+          ln -s /opt/censorarr/Censorarr "$pkg/usr/bin/censorarr"
+
+          cat > "$pkg/DEBIAN/control" <<EOF
+          Package: censorarr
+          Version: $CENSORARR_APP_VERSION
+          Section: utils
+          Priority: optional
+          Architecture: amd64
+          Maintainer: Censorarr Project <75155257+leestow@users.noreply.github.com>
+          Depends: adduser, ffmpeg, ca-certificates, libgomp1
+          Homepage: https://github.com/leestow/Censorarr
+          Description: Self-hosted clean-audio manager for movies and TV shows
+           Censorarr detects configured profanity and can create a separate CLEAN
+           audio track while preserving the original media streams.
+          EOF
+          sed -i 's/^          //' "$pkg/DEBIAN/control"
+
+          printf '/etc/default/censorarr\n' > "$pkg/DEBIAN/conffiles"
+
+          dpkg-deb --build --root-owner-group "$pkg" "$out/$CENSORARR_DEB_NAME"
+          dpkg-deb --info "$out/$CENSORARR_DEB_NAME"
+          dpkg-deb --contents "$out/$CENSORARR_DEB_NAME" | head -100
+
+      - name: Install and smoke test Debian package
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get install -y "./linux/dist-package/$CENSORARR_DEB_NAME"
+
+          test -x /opt/censorarr/Censorarr
+          test -L /usr/bin/censorarr
+          test -f /lib/systemd/system/censorarr.service
+          test -f /etc/default/censorarr
+          id censorarr
+
+          sudo systemctl stop censorarr.service >/dev/null 2>&1 || true
+          sudo pkill -f "/opt/censorarr/Censorarr" >/dev/null 2>&1 || true
+
+          sudo -u censorarr env \
+            CENSORARR_DATA_DIR=/var/lib/censorarr \
+            CENSORARR_HOST=127.0.0.1 \
+            CENSORARR_PORT=8087 \
+            /opt/censorarr/Censorarr --background \
+            > "$RUNNER_TEMP/censorarr-deb-smoke.log" 2>&1 &
+          launcher_pid=$!
+
+          cleanup() {
+            sudo kill "$launcher_pid" >/dev/null 2>&1 || true
+            sudo pkill -f "/opt/censorarr/Censorarr" >/dev/null 2>&1 || true
+          }
+          trap cleanup EXIT
+
+          passed=0
+          for _ in $(seq 1 45); do
+            if curl -fsS "http://127.0.0.1:8087/api/setup/status" > "$RUNNER_TEMP/deb-setup-status.json"; then
+              cat "$RUNNER_TEMP/deb-setup-status.json"
+              passed=1
+              break
+            fi
+            sleep 1
+          done
+
+          if [ "$passed" -ne 1 ]; then
+            cat "$RUNNER_TEMP/censorarr-deb-smoke.log" || true
+            exit 1
+          fi
+
+      - name: Upload Linux package artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Censorarr-Linux-amd64-${{ env.CENSORARR_APP_VERSION }}
+          path: linux/dist-package/${{ env.CENSORARR_DEB_NAME }}
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Publish package to GitHub Release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          tag="v$CENSORARR_APP_VERSION"
+          asset="linux/dist-package/$CENSORARR_DEB_NAME"
+
+          # On a new version the Windows build normally creates the shared release.
+          # Wait for it so both native installers land on one version page.
+          if ! gh release view "$tag" >/dev/null 2>&1; then
+            for _ in $(seq 1 60); do
+              sleep 10
+              if gh release view "$tag" >/dev/null 2>&1; then
+                break
+              fi
+            done
+          fi
+
+          if ! gh release view "$tag" >/dev/null 2>&1; then
+            notes="$(cat <<EOF
+          Censorarr $CENSORARR_APP_VERSION
+
+          Native installer downloads:
+          - Windows 11 x64: Censorarr-Setup-$CENSORARR_APP_VERSION.exe
+          - Debian/Ubuntu amd64: Censorarr-$CENSORARR_APP_VERSION-linux-amd64.deb
+
+          Docker and Synology users can continue using the source and compose files from this release.
+          EOF
+          )"
+            if ! gh release create "$tag" --target "$GITHUB_SHA" --title "Censorarr v$CENSORARR_APP_VERSION" --notes "$notes"; then
+              gh release view "$tag" >/dev/null
+            fi
+          fi
+
+          if gh release view "$tag" --json assets --jq '.assets[].name' | grep -Fxq "$CENSORARR_DEB_NAME"; then
+            echo "$CENSORARR_DEB_NAME is already published on $tag; leaving the versioned Release asset unchanged."
+            exit 0
+          fi
+
+          gh release upload "$tag" "$asset"

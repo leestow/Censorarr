@@ -8,6 +8,14 @@
 - A permission failure retries automatically when the runtime identity changes or when the file later becomes readable, without repeatedly invoking ffprobe while access is still blocked.
 - Main app and GPU worker now report version `1.6.5`.
 
+### Native installer packaging (2026-08-17)
+
+- Added a native Windows 11 x64 installer built and smoke-tested by GitHub Actions.
+- Added a native Debian/Ubuntu-family x86_64 `.deb` package built and smoke-tested on Ubuntu 22.04.
+- Native Linux installs Censorarr under `/opt/censorarr`, keeps persistent data under `/var/lib/censorarr`, and runs through a dedicated `censorarr` system user and `systemd` service.
+- Native Linux binds to localhost by default; LAN binding and web authentication are configured in `/etc/default/censorarr`.
+- Windows and Linux native installer assets are published to the matching version on GitHub Releases without overwriting an already-published versioned asset.
+
 ### Cross-platform folder picker hotfix (2026-08-16)
 
 - Added **Browse…** buttons for the Movies and TV folder fields in both the Setup Wizard and normal Settings.

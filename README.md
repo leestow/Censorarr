@@ -6,7 +6,7 @@ Censorarr is a self-hosted clean-audio manager for movies and TV shows. It detec
 
 The complete installation, configuration, integration, GPU-worker, permissions, updating, and troubleshooting documentation is in the **[Censorarr Wiki / Documentation](wiki/Home.md)**.
 
-Start with **[Quick Start](wiki/Quick-Start.md)**. Platform-specific guides are available for **[Windows](wiki/Windows-Installation.md)**, **[Synology Container Manager](wiki/Synology-Container-Manager.md)**, and **[Docker / Linux](wiki/Docker-Linux.md)**.
+Start with **[Quick Start](wiki/Quick-Start.md)**. Platform-specific guides are available for **[Windows](wiki/Windows-Installation.md)**, **[Native Linux](wiki/Linux-Installation.md)**, **[Synology Container Manager](wiki/Synology-Container-Manager.md)**, and **[Docker / Linux](wiki/Docker-Linux.md)**.
 
 ## Windows installer
 
@@ -23,6 +23,28 @@ Censorarr-Setup-X.Y.Z.exe
 It installs the application under `C:\Program Files\Censorarr`, stores persistent configuration and state under `C:\ProgramData\Censorarr`, bundles FFmpeg/FFprobe, and opens the same Censorarr web interface at `http://127.0.0.1:8087`. The Setup Wizard supports local drives, mapped drives, and reachable UNC network paths.
 
 See **[Windows Installation](wiki/Windows-Installation.md)** for the full guide.
+
+## Native Linux package
+
+Censorarr can also run natively on **Debian/Ubuntu-family x86_64 Linux** without Docker.
+
+**[Download the latest Linux `.deb` from GitHub Releases](https://github.com/leestow/Censorarr/releases/latest)**
+
+The package is named:
+
+```text
+Censorarr-X.Y.Z-linux-amd64.deb
+```
+
+Install it with:
+
+```bash
+sudo apt install ./Censorarr-X.Y.Z-linux-amd64.deb
+```
+
+The package installs Censorarr under `/opt/censorarr`, keeps persistent data under `/var/lib/censorarr`, creates a `censorarr` system user and `systemd` service, and uses the distribution FFmpeg package. The web UI binds to `127.0.0.1:8087` by default; headless/LAN deployments can enable network access in `/etc/default/censorarr`.
+
+See **[Native Linux Installation](wiki/Linux-Installation.md)** for media permissions, LAN access, service commands, and updating.
 
 ## What is required?
 
@@ -59,6 +81,7 @@ It walks through:
 | What you want | What to install |
 |---|---|
 | Native Windows 11 x64 | `Censorarr-Setup-X.Y.Z.exe` from GitHub Releases |
+| Native Debian/Ubuntu x86_64 | `Censorarr-X.Y.Z-linux-amd64.deb` from GitHub Releases |
 | Docker / Synology using CPU transcription | Main Censorarr project only |
 | Docker / Synology with NVIDIA GPU acceleration | Main Censorarr + GPU Worker |
 | GPU server for an existing Censorarr install | `gpu-worker/` only |
