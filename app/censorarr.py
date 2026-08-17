@@ -30,7 +30,7 @@ import subtitle_assist as subassist
 import remote_asr
 import secrets_store as secret_store
 
-VERSION = "1.6.3"
+VERSION = "1.6.4"
 STOP = False
 
 FAMILY_ALIASES: dict[str, list[str]] = {
@@ -197,6 +197,97 @@ def all_media_roots(cfg: dict) -> list[str]:
     roots = [str(x) for x in cfg.get("media_roots", ["/media"]) if str(x).strip()]
     roots.extend(tv_media_roots(cfg))
     return list(dict.fromkeys(roots))
+
+
+def media_access_preflight(cfg: dict) -> dict[str, Any]:
+    """Check configured media roots before loading Whisper or touching media.
+
+    Synology DSM ACLs can differ from ordinary Unix mode bits. Using os.scandir is
+    intentional: it verifies that the effective process identity can actually traverse
+    the mounted directory instead of trusting only path existence.
+    """
+    dry_run = bool(cfg.get("dry_run", True))
+    results: list[dict[str, Any]] = []
+    errors: list[str] = []
+    warnings: list[str] = []
+    for root_s in all_media_roots(cfg):
+        path = Path(root_s)
+        item: dict[str, Any] = {"path": str(path), "exists": path.exists(), "readable": False, "writable": False}
+        if not path.exists():
+            msg = f"Media root does not exist: {path}"
+            item["error"] = msg; errors.append(msg); results.append(item); continue
+        if not path.is_dir():
+            msg = f"Media root is not a directory: {path}"
+            item["error"] = msg; errors.append(msg); results.append(item); continue
+        try:
+            # Force a real directory-open/traversal operation; Synology ACL failures are
+            # surfaced here as PermissionError even when the bind mount itself exists.
+            with os.scandir(path) as it:
+                next(it, None)
+            item["readable"] = bool(os.access(path, os.R_OK | os.X_OK))
+        except PermissionError:
+            item["readable"] = False
+        except OSError as exc:
+            item["readable"] = False
+            item["detail"] = str(exc)
+        item["writable"] = bool(os.access(path, os.W_OK | os.X_OK))
+        if not item["readable"]:
+            msg = f"Media root is not readable/traversable by Censorarr: {path}"
+            item["error"] = msg; errors.append(msg)
+        elif not item["writable"]:
+            msg = f"Media root is not writable by Censorarr: {path}"
+            if dry_run:
+                item["warning"] = msg + " (Dry Run can continue, but Apply mode cannot.)"
+                warnings.append(item["warning"])
+            else:
+                item["error"] = msg + " (Apply mode requires write access.)"
+                errors.append(item["error"])
+        results.append(item)
+    return {
+        "ok": not errors,
+        "dry_run": dry_run,
+        "uid": os.geteuid(),
+        "gid": os.getegid(),
+        "requested_uid": os.environ.get("PUID", ""),
+        "requested_gid": os.environ.get("PGID", ""),
+        "effective_uid": os.environ.get("CENSORARR_EFFECTIVE_UID", str(os.geteuid())),
+        "effective_gid": os.environ.get("CENSORARR_EFFECTIVE_GID", str(os.getegid())),
+        "synology_compat_mode": os.environ.get("CENSORARR_SYNOLOGY_COMPAT_MODE", "auto"),
+        "roots": results,
+        "errors": errors,
+        "warnings": warnings,
+    }
+
+
+def wait_for_media_access(cfg: dict) -> dict[str, Any]:
+    """Keep the worker alive on permission problems instead of crash/restart looping."""
+    last_signature: tuple[str, ...] | None = None
+    while not STOP:
+        check = media_access_preflight(cfg)
+        signature = tuple(check.get("errors") or []) + tuple(check.get("warnings") or [])
+        if signature != last_signature:
+            for warning in check.get("warnings") or []:
+                logging.warning("MEDIA PREFLIGHT: %s", warning)
+            for error in check.get("errors") or []:
+                logging.error("MEDIA PREFLIGHT: %s", error)
+            if check.get("errors"):
+                logging.error(
+                    "Censorarr will wait without loading Whisper. Check the media bind mounts/PUID/PGID. "
+                    "On Synology, CENSORARR_SYNOLOGY_COMPAT_MODE=auto can fall back to container root when DSM ACLs require it."
+                )
+            last_signature = signature
+        if check.get("ok"):
+            return check
+        update_heartbeat(
+            "permissions-error", None, gate="media-permissions",
+            reason="Censorarr cannot access one or more configured media roots",
+            preflight=check,
+        )
+        for _ in range(10):
+            if STOP:
+                break
+            time.sleep(1)
+    return media_access_preflight(cfg)
 
 def media_type_for(media: Path, cfg: dict) -> str:
     # TV roots are checked first so a nested TV mount cannot be mistaken for a movie root.
@@ -1944,6 +2035,12 @@ def daemon(cfg: dict, args: argparse.Namespace) -> None:
         if STOP:
             return
 
+    preflight = wait_for_media_access(cfg)
+    if STOP:
+        return
+    logging.info("Media preflight passed as uid=%s gid=%s (SynologyCompat=%s)",
+                 preflight.get("uid"), preflight.get("gid"), preflight.get("synology_compat_mode"))
+
     profanity_path = Path(cfg["profanity"].get("file", "/config/en.json"))
     matcher = ProfanityMatcher(
         profanity_path,
@@ -2006,7 +2103,18 @@ def daemon(cfg: dict, args: argparse.Namespace) -> None:
             state["files"][key] = {"fingerprint":fp,"config_signature":sig,"status":"skipped-rating","media_type":media_type_for(p,cfg),"rating":rating,"time":time.time()}
             state_save(state_path,state)
             return
-        probe = ffprobe(p)
+        try:
+            probe = ffprobe(p)
+        except Exception as exc:
+            logging.error("SKIPPED media file because ffprobe could not read it: %s (%s)", p, exc)
+            state["files"][key] = {
+                "fingerprint": fp, "config_signature": sig, "status": "error", "time": time.time(),
+                "version": VERSION, "error": f"Cannot read/probe media file: {exc}",
+                "media_type": media_type_for(p, cfg), "rating": rating,
+            }
+            state_save(state_path, state)
+            integ.notify("failed", f"Censorarr cannot read {p.name}: {exc}", cfg, {"path": str(p), "error": str(exc)})
+            return
         if find_clean_audio_streams(probe, str(cfg["clean_track"].get("title", "English - CLEAN"))):
             if not force and not cfg["clean_track"].get("reprocess_existing_clean", False):
                 state["files"][key] = {"fingerprint": fp, "config_signature": sig, "status": "clean-exists", "media_type": media_type_for(p,cfg), "time": time.time(), "rating": rating}

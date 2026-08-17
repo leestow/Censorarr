@@ -175,6 +175,20 @@ def schedule_tests():
 
 
 
+def media_preflight_tests():
+    with tempfile.TemporaryDirectory() as td:
+        movies = Path(td) / "movies"
+        movies.mkdir()
+        cfg = pc.deep_merge(pc.DEFAULT_CONFIG, {
+            "media_roots": [str(movies)],
+            "tv": {"enabled": False},
+            "dry_run": True,
+        })
+        result = pc.media_access_preflight(cfg)
+        assert result["ok"], result
+        assert result["roots"][0]["readable"] is True, result
+
+
 def tv_tests():
     cfg = {
         'media_roots': ['/media'],
@@ -240,6 +254,7 @@ def main():
     overall_progress_tests()
     precision_alignment_tests()
     schedule_tests()
+    media_preflight_tests()
     tv_tests()
     sonarr_episode_join_tests()
     print('Censorarr v%s self-test: ALL PASS' % pc.VERSION)

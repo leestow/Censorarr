@@ -1,4 +1,4 @@
-# Censorarr 1.6.3
+# Censorarr 1.6.4
 
 Censorarr is a self-hosted clean-audio manager for movies and TV shows. It detects configured profanity, keeps the original media streams, and adds or replaces a separate **CLEAN** audio track.
 
@@ -46,6 +46,8 @@ It walks through:
 See [`INSTALL-FIRST.txt`](INSTALL-FIRST.txt), [`INSTALL-SOURCE.md`](INSTALL-SOURCE.md), and [`README-SYNOLOGY.md`](README-SYNOLOGY.md).
 
 The included `docker-compose.yml` is a starting point. Change the host-side media paths, PUID/PGID, and any optional integration settings for your environment.
+
+On Synology, `CENSORARR_SYNOLOGY_COMPAT_MODE=auto` keeps the configured PUID/PGID when they can access the media mounts and automatically falls back to container root only when DSM ACLs block that identity while root can access the same mount.
 
 ### GPU Worker only
 

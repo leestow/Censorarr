@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.6.4
+
+- Added Synology DSM ACL compatibility mode (`CENSORARR_SYNOLOGY_COMPAT_MODE=auto|true|false`).
+- `auto` keeps the configured PUID/PGID when possible and falls back to container root only when DSM ACLs block the media mount for that identity but root can read it.
+- Added media-root preflight before Whisper/model loading. Permission problems now keep the worker alive in a clear `permissions-error` state instead of causing a restart loop.
+- The first-run Setup Wizard now checks media access before setup can complete.
+- Dashboard status now identifies media permission failures.
+- ffprobe/read failures on an individual media file are recorded as a file error and no longer terminate the whole worker.
+- Main app and GPU worker now both report version `1.6.4`.
+
 ## 1.6.3
 
 - Completed Censorarr naming cleanup across main app, Docker examples, documentation, marker/log/temp defaults, and GPU-worker protocol names.

@@ -25,7 +25,7 @@ import subtitle_assist as subassist
 import remote_asr
 import secrets_store as secret_store
 
-VERSION = "1.6.3"
+VERSION = "1.6.4"
 CONFIG = Path(os.environ.get("CENSORARR_CONFIG", "/config/config.yaml"))
 LOG = Path("/config/censorarr.log")
 HEARTBEAT = Path("/config/heartbeat.json")
@@ -251,7 +251,9 @@ def static_asset(name: str):
 
 @app.get("/api/health")
 def health():
-    return {"ok": True, "version": VERSION, "worker_alive": bool(supervisor.proc and supervisor.proc.poll() is None)}
+    cfg = pc.load_config(CONFIG)
+    return {"ok": True, "version": VERSION, "worker_alive": bool(supervisor.proc and supervisor.proc.poll() is None),
+            "media_preflight": pc.media_access_preflight(cfg)}
 
 
 @app.get("/api/status")
@@ -299,6 +301,14 @@ def status(_: bool = Depends(auth)):
         "average_processing_seconds": avg, "estimated_backlog_seconds": avg * backlog if avg is not None else None,
         "schedule_ok": schedule_ok, "schedule_reason": schedule_reason,
         "system": integ.system_stats(str((cfg.get("media_roots") or ["/media"])[0])),
+        "media_preflight": pc.media_access_preflight(cfg),
+        "runtime_identity": {
+            "uid": os.geteuid(), "gid": os.getegid(),
+            "requested_uid": os.environ.get("PUID", ""), "requested_gid": os.environ.get("PGID", ""),
+            "effective_uid": os.environ.get("CENSORARR_EFFECTIVE_UID", str(os.geteuid())),
+            "effective_gid": os.environ.get("CENSORARR_EFFECTIVE_GID", str(os.getegid())),
+            "synology_compat_mode": os.environ.get("CENSORARR_SYNOLOGY_COMPAT_MODE", "auto"),
+        },
         "secrets": {k: v["set"] for k,v in secret_store.statuses(_secret_spec(cfg)).items()},
     }
 
@@ -746,9 +756,18 @@ def setup_status(_: bool = Depends(auth)):
     }
 
 
+@app.get("/api/system/preflight")
+def system_preflight(_: bool = Depends(auth)):
+    return pc.media_access_preflight(pc.load_config(CONFIG))
+
+
 @app.post("/api/setup/complete")
 def setup_complete(_: bool = Depends(auth)):
     raw = yaml.safe_load(CONFIG.read_text(encoding="utf-8")) or {}
+    preflight = pc.media_access_preflight(raw)
+    if not preflight.get("ok"):
+        problems = "; ".join(preflight.get("errors") or ["Unknown media permission problem"])
+        raise HTTPException(409, f"Media permission check failed: {problems}. Check your bind mounts/PUID/PGID or enable Synology compatibility mode and recreate the container.")
     raw["setup"] = {"completed": True, "wizard_version": 1}
     tmp = CONFIG.with_suffix(".tmp")
     tmp.write_text(yaml.safe_dump(raw, sort_keys=False), encoding="utf-8")

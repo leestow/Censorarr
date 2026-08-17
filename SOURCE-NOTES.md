@@ -1,4 +1,4 @@
-# Censorarr 1.6.3 source notes
+# Censorarr 1.6.4 source notes
 
 - `app/censorarr.py` — Movies/TV watcher, rating gates, Whisper/fuzzy rescue, subtitle-assisted rescue, review apply, safe remux/validation, markers/state, and effective profanity dictionary.
 - `app/webapp.py` — FastAPI web manager and REST endpoints.
@@ -7,3 +7,4 @@
 - `app/subtitle_assist.py` — subtitle parsing/alignment/rescue support.
 - `app/static/index.html` — browser UI and Setup Wizard.
 - `gpu-worker/app/worker.py` — optional NVIDIA Faster-Whisper worker with bounded long-audio chunking.
+- `docker-entrypoint.sh` — PUID/PGID startup handling plus Synology DSM ACL compatibility fallback and media permission preflight.

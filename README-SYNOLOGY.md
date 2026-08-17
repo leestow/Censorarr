@@ -1,4 +1,4 @@
-# Censorarr 1.6.3 — Synology Installation
+# Censorarr 1.6.4 — Synology Installation
 
 Censorarr can run standalone against mounted Movies and TV Shows folders. Plex, Radarr, Sonarr, Bazarr, and the remote GPU Worker are optional integrations.
 
@@ -49,7 +49,7 @@ sudo docker compose up -d --build
 
 ## Permissions
 
-Censorarr runs as the configured numeric `PUID`/`PGID` and intentionally does not recursively change ownership on `/media` or `/tv`.
+Censorarr normally runs as the configured numeric `PUID`/`PGID` and intentionally does not recursively change ownership on `/media` or `/tv`. With the shipped `CENSORARR_SYNOLOGY_COMPAT_MODE=auto`, Censorarr first tests that identity against the mounted media folders. If DSM ACLs block it but container root can access the same mount, Censorarr falls back to root for compatibility and logs the reason. Set the mode to `false` to forbid that fallback, or `true` to always run as container root.
 
 Find the IDs for a Synology user that can read/write both media shares:
 
@@ -105,7 +105,7 @@ Inside the running main container:
 docker exec -it censorarr python /app/selftest.py
 ```
 
-The v1.6.3 self-test covers dictionary/fuzzy matching, large mute lists, subtitle alignment, progress mapping, MP4 metadata/default-track handling, precision mute behavior, schedules, TV/rating logic, and Sonarr episode path mapping.
+The v1.6.4 self-test covers dictionary/fuzzy matching, large mute lists, subtitle alignment, progress mapping, MP4 metadata/default-track handling, precision mute behavior, schedules, TV/rating logic, and Sonarr episode path mapping.
 
 ## Limits
 

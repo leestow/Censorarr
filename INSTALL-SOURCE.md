@@ -1,11 +1,11 @@
-# Censorarr 1.6.3 — Source Installation
+# Censorarr 1.6.4 — Source Installation
 
 ## Main application
 
 1. Clone or extract the repository onto the Docker host.
 2. Edit `docker-compose.yml`.
 3. Change the host-side Movies and TV Shows paths to match your system.
-4. Set `PUID`, `PGID`, `TZ`, and any optional integration credentials.
+4. Set `PUID`, `PGID`, `TZ`, and any optional integration credentials. On Synology, leave `CENSORARR_SYNOLOGY_COMPAT_MODE: "auto"` unless you specifically want to forbid or force root fallback.
 5. Start Censorarr:
 
 ```bash
