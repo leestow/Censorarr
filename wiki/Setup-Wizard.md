@@ -4,6 +4,12 @@ Fresh installations stay idle until the Setup Wizard is completed.
 
 You can reopen it later from **Settings → Setup Wizard**.
 
+## Setup Wizard interface
+
+The first-run wizard walks through required media/transcription settings and optional integrations step by step.
+
+![Censorarr Setup Wizard](https://raw.githubusercontent.com/leestow/Censorarr/main/docs/screenshots/setup-wizard.jpg)
+
 ## Step 1 — Media folders and mode
 
 Typical container paths:
@@ -12,6 +18,8 @@ Typical container paths:
 Movies: /media
 TV:     /tv
 ```
+
+On native Windows, use real Windows paths such as `D:\Movies`, `E:\TV Shows`, a mapped drive, or a reachable UNC path.
 
 Start with **Dry Run** enabled.
 

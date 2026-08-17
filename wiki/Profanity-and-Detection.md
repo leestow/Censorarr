@@ -2,6 +2,12 @@
 
 Censorarr combines Whisper transcription, profanity matching, rescue passes, and optional subtitle evidence.
 
+## Dictionary interface
+
+The Dictionary page lets you review built-in and custom detection patterns, severity levels, detection scope, and permanent exceptions.
+
+![Censorarr Dictionary](https://raw.githubusercontent.com/leestow/Censorarr/main/docs/screenshots/dictionary.jpg)
+
 ## Profanity dictionary
 
 The default configured profanity file is:

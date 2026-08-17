@@ -33,6 +33,26 @@ Everything else is optional.
 
 Censorarr works without Plex, Radarr, Sonarr, or Bazarr. Without Radarr/Sonarr, the Media pages fall back to the configured media folders.
 
+## Interface tour
+
+### Dashboard
+
+The Dashboard shows current processing, queue status, GPU-worker progress, system information, and live logs.
+
+![Censorarr dashboard](https://raw.githubusercontent.com/leestow/Censorarr/main/docs/screenshots/dashboard.jpg)
+
+### Movies library
+
+The Movies page shows posters, metadata, quality, and each movie's current Censorarr status.
+
+![Censorarr Movies library](https://raw.githubusercontent.com/leestow/Censorarr/main/docs/screenshots/movies-library.jpg)
+
+### Movie details
+
+Open a movie for a detailed view of its file, metadata, CLEAN conversion status, and processing controls.
+
+![Censorarr movie details](https://raw.githubusercontent.com/leestow/Censorarr/main/docs/screenshots/movie-details.jpg)
+
 ## Recommended reading order
 
 1. [Quick Start](Quick-Start.md)

@@ -1,0 +1,69 @@
+name: Publish Wiki
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - "wiki/**"
+      - ".github/workflows/publish-wiki.yml"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: publish-wiki
+  cancel-in-progress: true
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Clone live GitHub Wiki
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          git clone "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.wiki.git" wiki-live
+
+      - name: Copy and normalize Wiki pages
+        env:
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: |
+          find wiki-live -maxdepth 1 -type f -name '*.md' -delete
+          cp wiki/*.md wiki-live/
+          python - <<'PY'
+          import os
+          import re
+          from pathlib import Path
+
+          repo = os.environ["GITHUB_REPOSITORY"]
+          base = f"https://github.com/{repo}/wiki/"
+          link_re = re.compile(r'\]\((?!https?://|#)([^)\s]+?)\.md(#[^)]+)?\)')
+
+          for path in Path("wiki-live").glob("*.md"):
+              text = path.read_text(encoding="utf-8")
+              def repl(match):
+                  target = match.group(1)
+                  anchor = match.group(2) or ""
+                  return f"]({base}{target}{anchor})"
+              text = link_re.sub(repl, text)
+              path.write_text(text, encoding="utf-8", newline="\n")
+          PY
+
+      - name: Commit and push Wiki
+        working-directory: wiki-live
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          if git diff --cached --quiet; then
+            echo "Wiki is already current."
+            exit 0
+          fi
+          git commit -m "Publish Censorarr documentation"
+          git push

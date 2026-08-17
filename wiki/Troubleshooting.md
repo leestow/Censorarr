@@ -1,11 +1,23 @@
 # Troubleshooting
 
+## Failure Center
+
+The **Activity > Failures** page collects items that need attention and provides Retry and Details actions.
+
+![Censorarr Failure Center](https://raw.githubusercontent.com/leestow/Censorarr/main/docs/screenshots/failures.jpg)
+
 ## Logs
 
-Main log:
+Main Docker/Synology log:
 
 ```text
 /config/censorarr.log
+```
+
+Native Windows launcher log:
+
+```text
+C:\ProgramData\Censorarr\logs\windows-launcher.log
 ```
 
 Docker logs:
@@ -60,6 +72,17 @@ CENSORARR_SYNOLOGY_COMPAT_MODE: "auto"
 ```
 
 Censorarr 1.6.5 checks nested ACLs and can fall back automatically.
+
+## Windows folder or network share is unavailable
+
+If a folder works in File Explorer but not in Censorarr:
+
+1. Confirm Censorarr is running under the same signed-in Windows account.
+2. Try a UNC path such as `\\SERVER\Share\Movies` if a mapped drive is not visible.
+3. Confirm the account has read permission, plus write permission when Apply mode will modify media.
+4. Restart Censorarr after changing credentials or drive mappings.
+
+See [Windows Installation](Windows-Installation.md).
 
 ## GPU Worker says `Invalid worker token`
 
@@ -180,7 +203,7 @@ Check both movie and TV path mappings.
 
 ## Browser cannot open Censorarr
 
-Check compose:
+Docker/Synology: check compose:
 
 ```yaml
 ports:
@@ -191,6 +214,12 @@ Then use:
 
 ```text
 http://SERVER-IP:8087
+```
+
+Native Windows normally uses:
+
+```text
+http://127.0.0.1:8087
 ```
 
 ## Self-test
