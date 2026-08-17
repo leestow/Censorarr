@@ -2,6 +2,12 @@
 
 Censorarr is a self-hosted clean-audio manager for movies and TV shows. It detects configured profanity, keeps the original media streams, and adds or replaces a separate **CLEAN** audio track.
 
+## Documentation
+
+The complete installation, configuration, integration, GPU-worker, permissions, updating, and troubleshooting documentation is in the **[Censorarr Wiki / Documentation](wiki/Home.md)**.
+
+Start with **[Quick Start](wiki/Quick-Start.md)**, or go directly to the **[Synology Container Manager guide](wiki/Synology-Container-Manager.md)**.
+
 ## What is required?
 
 Only two things are required:
