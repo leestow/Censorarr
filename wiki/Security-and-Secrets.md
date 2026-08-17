@@ -1,6 +1,6 @@
 # Security & Secrets
 
-Censorarr can store credentials for optional integrations. Treat these as secrets.
+Censorarr can store credentials for optional integrations. Treat these values as secrets.
 
 ## Secret precedence
 
@@ -16,26 +16,20 @@ This matters when troubleshooting. A stale GUI-saved value can override an envir
 
 GUI-saved secrets are stored under the persistent `/config` area.
 
-Do not publish runtime `/config` contents.
+Do not expose, share, upload, or publish the contents of your runtime `/config` directory.
 
-## Never commit
-
-Avoid committing:
+Sensitive data can include:
 
 ```text
-config/
 secrets.json
-.env
-.env.*
+config.yaml
+.env files
 API tokens
 worker tokens
-logs
-reports
-model caches
-backup snapshots containing config
+notification credentials
+logs that contain private URLs or identifiers
+backup snapshots containing configuration
 ```
-
-The repository `.gitignore` excludes common runtime locations, but always review changes before pushing.
 
 ## GPU Worker token
 
@@ -52,7 +46,7 @@ Current protocol header:
 X-Censorarr-Token
 ```
 
-Do not publish the real token in screenshots, issues, logs, or your public compose file.
+Do not expose the real token in screenshots, support posts, logs, or configuration examples you share publicly.
 
 ## Web login
 
@@ -65,17 +59,16 @@ WEB_PASSWORD: ""
 
 A blank password means no web login.
 
-If Censorarr is exposed beyond a trusted LAN, use appropriate authentication/reverse-proxy/network controls rather than relying on an open application port.
+If Censorarr is exposed beyond a trusted LAN, use appropriate authentication, reverse-proxy, firewall, VPN, or other network controls rather than relying on an open application port.
 
 ## Keep the GPU Worker private
 
-The worker accepts audio uploads for transcription. Keep TCP 9000 on a trusted network or otherwise protect access, and always configure a worker token.
+The worker accepts audio uploads for transcription. Keep TCP port `9000` on a trusted network or otherwise protect access, and always configure a worker token.
 
 ## Rotate leaked credentials
 
-If a token/API key is accidentally committed to a public repository, treat it as compromised:
+If a token or API key is accidentally exposed, treat it as compromised:
 
-1. rotate/revoke it at the source
-2. update Censorarr
-3. remove it from current files
-4. consider repository-history cleanup if necessary
+1. rotate or revoke it at the source
+2. update Censorarr with the replacement value
+3. remove the exposed value from any screenshots, posts, logs, or files you control
