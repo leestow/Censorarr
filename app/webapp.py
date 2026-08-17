@@ -25,7 +25,7 @@ import subtitle_assist as subassist
 import remote_asr
 import secrets_store as secret_store
 
-VERSION = "1.6.4"
+VERSION = "1.6.5"
 CONFIG = Path(os.environ.get("CENSORARR_CONFIG", "/config/config.yaml"))
 LOG = Path("/config/censorarr.log")
 HEARTBEAT = Path("/config/heartbeat.json")

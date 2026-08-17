@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.6.5
+
+- Synology `auto` compatibility mode now scans nested Movies/TV folders (to depth 4) instead of checking only `/media` and `/tv`, so mixed DSM ACLs are detected before privileges are dropped.
+- `auto` also checks for media files that are individually unreadable by the requested PUID/PGID and falls back to container root when root can access the same tree.
+- Permission-denied media failures remain visible as normal failures, but now carry retryable permission metadata instead of being treated as deterministic ffprobe failures.
+- A permission failure retries automatically when the runtime identity changes or when the file later becomes readable, without repeatedly invoking ffprobe while access is still blocked.
+- Main app and GPU worker now report version `1.6.5`.
+
 ## 1.6.4
 
 - Added Synology DSM ACL compatibility mode (`CENSORARR_SYNOLOGY_COMPAT_MODE=auto|true|false`).

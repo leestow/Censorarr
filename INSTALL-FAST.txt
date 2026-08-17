@@ -1,9 +1,9 @@
-CENSORARR v1.6.4 — FAST SOURCE UPDATE
+CENSORARR v1.6.5 — FAST SOURCE UPDATE
 
 For an existing Censorarr installation that bind-mounts its app directory:
 
 1. Back up your current app files and config.
-2. Replace the app files with the matching v1.6.4 files.
+2. Replace the app files with the matching v1.6.5 files.
 3. Restart the container:
      docker restart censorarr
 4. Hard-refresh the browser (Ctrl+F5).
@@ -13,8 +13,9 @@ For a normal source checkout, prefer:
   docker compose up -d --build
 
 
-Synology permission compatibility (v1.6.4):
+Synology permission compatibility (v1.6.5):
 - CENSORARR_SYNOLOGY_COMPAT_MODE=auto is recommended for DSM Container Manager.
 - auto uses PUID/PGID normally and falls back to container root only if DSM ACLs block that identity from a media mount while root can access it.
 - false forbids root fallback; true always uses container root.
 - Censorarr checks media access before loading Whisper and waits with a clear permission error instead of crash-looping.
+- v1.6.5 also checks nested media ACLs and automatically retries permission failures after the runtime identity changes or the file becomes readable.

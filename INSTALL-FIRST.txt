@@ -1,4 +1,4 @@
-CENSORARR v1.6.4 — FIRST INSTALL
+CENSORARR v1.6.5 — FIRST INSTALL
 
 1. Copy or clone the Censorarr source to your Docker host.
 2. Edit docker-compose.yml and set your host-side Movies/TV paths, PUID, PGID, timezone, and optional integration credentials.
@@ -16,8 +16,9 @@ Self-test:
   docker exec -it censorarr python /app/selftest.py
 
 
-Synology permission compatibility (v1.6.4):
+Synology permission compatibility (v1.6.5):
 - CENSORARR_SYNOLOGY_COMPAT_MODE=auto is recommended for DSM Container Manager.
 - auto uses PUID/PGID normally and falls back to container root only if DSM ACLs block that identity from a media mount while root can access it.
 - false forbids root fallback; true always uses container root.
 - Censorarr checks media access before loading Whisper and waits with a clear permission error instead of crash-looping.
+- v1.6.5 also checks nested media ACLs and automatically retries permission failures after the runtime identity changes or the file becomes readable.

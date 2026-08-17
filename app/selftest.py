@@ -175,6 +175,16 @@ def schedule_tests():
 
 
 
+def media_file_readability_tests():
+    with tempfile.TemporaryDirectory() as td:
+        media = Path(td) / "sample.mkv"
+        media.write_bytes(b"x")
+        ok, detail = pc.media_file_readable(media)
+        assert ok is True and detail == "", (ok, detail)
+        sig = pc.runtime_identity_signature()
+        assert isinstance(sig, str) and sig, sig
+
+
 def media_preflight_tests():
     with tempfile.TemporaryDirectory() as td:
         movies = Path(td) / "movies"
@@ -254,6 +264,7 @@ def main():
     overall_progress_tests()
     precision_alignment_tests()
     schedule_tests()
+    media_file_readability_tests()
     media_preflight_tests()
     tv_tests()
     sonarr_episode_join_tests()

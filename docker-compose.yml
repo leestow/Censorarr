@@ -18,9 +18,10 @@ services:
       UMASK: "002"
 
       # Synology DSM ACLs can allow container root to access a share while the same
-      # numeric PUID/PGID cannot. auto uses PUID/PGID normally and falls back to
-      # container root only when a media mount is unreadable by that identity but
-      # readable by root. Set false to forbid fallback; true always uses root.
+      # numeric PUID/PGID cannot. auto uses PUID/PGID normally, checks nested media
+      # folders/files for mixed DSM ACLs, and falls back to container root only when
+      # that identity is blocked but root can access the same media tree.
+      # Set false to forbid fallback; true always uses root.
       CENSORARR_SYNOLOGY_COMPAT_MODE: "auto"
 
       # Optional. Needed only if you enable Plex features (rating filters, playback pause, refresh).

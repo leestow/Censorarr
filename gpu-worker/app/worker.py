@@ -18,7 +18,7 @@ from typing import Any
 import ctranslate2
 from fastapi import FastAPI, HTTPException, Query, Request
 
-VERSION = '1.6.4'
+VERSION = '1.6.5'
 MODEL_DIR = Path(os.environ.get('ASR_MODEL_DIR', '/models'))
 DEFAULT_MODEL = os.environ.get('ASR_MODEL', 'small.en')
 DEFAULT_COMPUTE = os.environ.get('ASR_COMPUTE_TYPE', 'int8_float32')

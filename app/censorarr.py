@@ -30,7 +30,7 @@ import subtitle_assist as subassist
 import remote_asr
 import secrets_store as secret_store
 
-VERSION = "1.6.4"
+VERSION = "1.6.5"
 STOP = False
 
 FAMILY_ALIASES: dict[str, list[str]] = {
@@ -288,6 +288,34 @@ def wait_for_media_access(cfg: dict) -> dict[str, Any]:
                 break
             time.sleep(1)
     return media_access_preflight(cfg)
+
+
+
+def runtime_identity_signature() -> str:
+    """Stable identity marker used to decide whether a permission failure should retry."""
+    return ":".join([
+        str(os.geteuid()), str(os.getegid()),
+        str(os.environ.get("PUID", "")), str(os.environ.get("PGID", "")),
+        str(os.environ.get("CENSORARR_EFFECTIVE_UID", "")),
+        str(os.environ.get("CENSORARR_EFFECTIVE_GID", "")),
+        str(os.environ.get("CENSORARR_SYNOLOGY_COMPAT_MODE", "auto")),
+    ])
+
+
+def media_file_readable(path: Path) -> tuple[bool, str]:
+    """Actually open a media file so DSM ACL read failures are detected before ffprobe."""
+    try:
+        with path.open("rb") as fh:
+            fh.read(1)
+        return True, ""
+    except PermissionError as exc:
+        return False, str(exc)
+    except OSError as exc:
+        # Only classify explicit permission failures as retryable. Other I/O/probe errors
+        # remain deterministic errors and keep the existing no-retry-every-scan behavior.
+        if getattr(exc, "errno", None) in {1, 13}:
+            return False, str(exc)
+        return True, ""
 
 def media_type_for(media: Path, cfg: dict) -> str:
     # TV roots are checked first so a nested TV mount cannot be mistaken for a movie root.
@@ -2086,10 +2114,18 @@ def daemon(cfg: dict, args: argparse.Namespace) -> None:
         if not force and old.get("fingerprint") == fp and old.get("config_signature") == sig and old.get("status") == "dry-run":
             return
         # Do not burn hours retrying a deterministic failure every scan. A new
-        # Censorarr version or a manual/GUI reprocess will try it again.
-        if (not force and old.get("fingerprint") == fp and old.get("config_signature") == sig
-                and old.get("status") == "error" and old.get("version") == VERSION):
-            return
+        # Censorarr version or a manual/GUI reprocess will try it again. Permission
+        # failures are different: retry automatically when the runtime identity changes
+        # or when the file becomes readable under the same identity.
+        if not force and old.get("fingerprint") == fp and old.get("config_signature") == sig:
+            if old.get("status") == "error" and old.get("version") == VERSION:
+                if old.get("retryable") and old.get("error_kind") == "permission":
+                    same_identity = old.get("runtime_identity") == runtime_identity_signature()
+                    readable_now, _ = media_file_readable(p)
+                    if same_identity and not readable_now:
+                        return
+                else:
+                    return
         decision, rating, rating_reason = rating_decision(p, cfg)
         if decision == "wait":
             logging.info("Waiting for usable Plex rating: %s (%s)", p, rating_reason)
@@ -2103,17 +2139,31 @@ def daemon(cfg: dict, args: argparse.Namespace) -> None:
             state["files"][key] = {"fingerprint":fp,"config_signature":sig,"status":"skipped-rating","media_type":media_type_for(p,cfg),"rating":rating,"time":time.time()}
             state_save(state_path,state)
             return
-        try:
-            probe = ffprobe(p)
-        except Exception as exc:
-            logging.error("SKIPPED media file because ffprobe could not read it: %s (%s)", p, exc)
+        readable, read_error = media_file_readable(p)
+        if not readable:
+            logging.error("SKIPPED media file because Censorarr does not have read permission: %s (%s)", p, read_error)
             state["files"][key] = {
                 "fingerprint": fp, "config_signature": sig, "status": "error", "time": time.time(),
-                "version": VERSION, "error": f"Cannot read/probe media file: {exc}",
+                "version": VERSION, "error": f"Permission denied while reading media file: {read_error}",
+                "error_kind": "permission", "retryable": True,
+                "runtime_identity": runtime_identity_signature(),
                 "media_type": media_type_for(p, cfg), "rating": rating,
             }
             state_save(state_path, state)
-            integ.notify("failed", f"Censorarr cannot read {p.name}: {exc}", cfg, {"path": str(p), "error": str(exc)})
+            integ.notify("failed", f"Censorarr cannot read {p.name}: permission denied", cfg,
+                         {"path": str(p), "error": read_error, "retryable": True})
+            return
+        try:
+            probe = ffprobe(p)
+        except Exception as exc:
+            logging.error("SKIPPED media file because ffprobe could not probe it: %s (%s)", p, exc)
+            state["files"][key] = {
+                "fingerprint": fp, "config_signature": sig, "status": "error", "time": time.time(),
+                "version": VERSION, "error": f"Cannot probe media file: {exc}",
+                "media_type": media_type_for(p, cfg), "rating": rating,
+            }
+            state_save(state_path, state)
+            integ.notify("failed", f"Censorarr cannot probe {p.name}: {exc}", cfg, {"path": str(p), "error": str(exc)})
             return
         if find_clean_audio_streams(probe, str(cfg["clean_track"].get("title", "English - CLEAN"))):
             if not force and not cfg["clean_track"].get("reprocess_existing_clean", False):

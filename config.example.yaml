@@ -1,4 +1,4 @@
-# Censorarr v1.6.4 - Movies + TV Shows watcher + Web Manager
+# Censorarr v1.6.5 - Movies + TV Shows watcher + Web Manager
 media_roots:
   - /media
 extensions: [.mkv, .mp4, .m4v]
