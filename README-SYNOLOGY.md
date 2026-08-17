@@ -1,4 +1,4 @@
-# Censorarr 1.6.3 — Synology Installation
+# Censorarr 1.6.4 — Synology Installation
 
 Censorarr can run standalone against mounted Movies and TV Shows folders. Plex, Radarr, Sonarr, Bazarr, and the remote GPU Worker are optional integrations.
 
@@ -24,17 +24,19 @@ Typical mounts are:
 
 - `/volume1/Movies` → `/media`
 - `/volume1/TV Shows` → `/tv`
-- `/volume1/docker/censorarr/config` → `/config`
-- `/volume1/docker/censorarr/work` → `/work`
+- `./config` → `/config`
+- `./work` → `/work`
 
-Change the **left side** of the media mounts in `docker-compose.yml` to match your Synology shares.
+The application/config/work mounts in the shipped `docker-compose.yml` are **relative to the Container Manager project folder**, so the project may be named `censorarr`, `censorarr-test`, or placed elsewhere without editing those paths. The repository includes `config/.gitkeep` and `work/.gitkeep` so both required directories exist immediately after cloning or extracting the release.
+
+Change only the **left side** of the Movies/TV media mounts to match your Synology shares.
 
 ## Install
 
 1. Copy or clone the source into `/volume1/docker/censorarr` (or another project folder).
 2. Edit `docker-compose.yml`.
 3. Set the host-side Movies/TV paths.
-4. Set `PUID`, `PGID`, `UMASK`, and `TZ` for your environment.
+4. Set `PUID`, `PGID`, `UMASK`, and `TZ` for your environment. Leave `CENSORARR_SYNOLOGY_COMPAT_MODE: "auto"` unless you specifically want to forbid or force root compatibility mode.
 5. Add credentials only for integrations you intend to use.
 6. In DSM Container Manager, create/start the project from the Censorarr folder, or from SSH run:
 
@@ -49,7 +51,15 @@ sudo docker compose up -d --build
 
 ## Permissions
 
-Censorarr runs as the configured numeric `PUID`/`PGID` and intentionally does not recursively change ownership on `/media` or `/tv`.
+Censorarr normally runs as the configured numeric `PUID`/`PGID` and intentionally does not recursively change ownership on `/media` or `/tv`.
+
+Synology DSM ACLs have an important edge case: a bind-mounted shared folder can be readable by **container root** while the same numeric PUID/PGID cannot traverse it. Censorarr 1.6.4 adds a Synology compatibility mode:
+
+- `CENSORARR_SYNOLOGY_COMPAT_MODE: "auto"` (recommended on DSM) — use PUID/PGID normally, but automatically fall back to container root only when a media mount is unreadable by that identity and readable by root.
+- `CENSORARR_SYNOLOGY_COMPAT_MODE: "false"` — never fall back to root. Permission problems are reported and processing waits.
+- `CENSORARR_SYNOLOGY_COMPAT_MODE: "true"` — always run Censorarr as container root. Use only when DSM ACLs require it.
+
+The effective identity and the compatibility decision are printed at container startup. The worker also performs a media preflight **before Whisper is loaded**, so a bad mount/ACL produces a clear permission status instead of an ffprobe crash/restart loop.
 
 Find the IDs for a Synology user that can read/write both media shares:
 
@@ -64,6 +74,7 @@ environment:
   PUID: "1026"
   PGID: "100"
   UMASK: "002"
+  CENSORARR_SYNOLOGY_COMPAT_MODE: "auto"
 ```
 
 ## Persistent files
@@ -105,7 +116,7 @@ Inside the running main container:
 docker exec -it censorarr python /app/selftest.py
 ```
 
-The v1.6.3 self-test covers dictionary/fuzzy matching, large mute lists, subtitle alignment, progress mapping, MP4 metadata/default-track handling, precision mute behavior, schedules, TV/rating logic, and Sonarr episode path mapping.
+The v1.6.4 self-test covers dictionary/fuzzy matching, large mute lists, subtitle alignment, progress mapping, MP4 metadata/default-track handling, precision mute behavior, schedules, TV/rating logic, and Sonarr episode path mapping.
 
 ## Limits
 

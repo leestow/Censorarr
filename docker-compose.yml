@@ -17,6 +17,12 @@ services:
       PGID: "1000"
       UMASK: "002"
 
+      # Synology DSM ACLs can allow container root to access a share while the same
+      # numeric PUID/PGID cannot. auto uses PUID/PGID normally and falls back to
+      # container root only when a media mount is unreadable by that identity but
+      # readable by root. Set false to forbid fallback; true always uses root.
+      CENSORARR_SYNOLOGY_COMPAT_MODE: "auto"
+
       # Optional. Needed only if you enable Plex features (rating filters, playback pause, refresh).
       PLEX_TOKEN: ""
 
@@ -36,11 +42,11 @@ services:
       SMTP_PASSWORD: ""
     volumes:
       # Censorarr application files - allows fast upgrades without rebuilding image
-      - /volume1/docker/censorarr/app:/app
-      - /volume1/docker/censorarr/en.json:/app/en.json:ro
-      - /volume1/docker/censorarr/config.example.yaml:/app/config.example.yaml:ro
-      - /volume1/docker/censorarr/config:/config
-      - /volume1/docker/censorarr/work:/work
+      - ./app:/app
+      - ./en.json:/app/en.json:ro
+      - ./config.example.yaml:/app/config.example.yaml:ro
+      - ./config:/config
+      - ./work:/work
       # CHANGE LEFT SIDES to your complete Movies and TV Shows shared folders.
       - /volume1/Movies:/media:rw
       - /volume1/TV Shows:/tv:rw

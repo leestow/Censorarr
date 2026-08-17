@@ -1,4 +1,4 @@
-# Censorarr 1.6.3 — Source Installation
+# Censorarr 1.6.4 — Source Installation
 
 ## Main application
 
@@ -19,3 +19,10 @@ docker compose up -d --build
 ## GPU Worker
 
 See [`gpu-worker/README.md`](gpu-worker/README.md). The GPU Worker can be installed on a completely separate NVIDIA-equipped server.
+
+
+Synology permission compatibility (v1.6.4):
+- CENSORARR_SYNOLOGY_COMPAT_MODE=auto is recommended for DSM Container Manager.
+- auto uses PUID/PGID normally and falls back to container root only if DSM ACLs block that identity from a media mount while root can access it.
+- false forbids root fallback; true always uses container root.
+- Censorarr checks media access before loading Whisper and waits with a clear permission error instead of crash-looping.

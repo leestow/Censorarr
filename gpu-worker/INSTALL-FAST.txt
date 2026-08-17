@@ -1,4 +1,4 @@
-CENSORARR GPU WORKER v1.6.3 — UPDATE
+CENSORARR GPU WORKER v1.6.4 — UPDATE
 
 From an existing git/source checkout:
 

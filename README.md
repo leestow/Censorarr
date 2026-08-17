@@ -1,4 +1,4 @@
-# Censorarr 1.6.3
+# Censorarr 1.6.4
 
 Censorarr is a self-hosted clean-audio manager for movies and TV shows. It detects configured profanity, keeps the original media streams, and adds or replaces a separate **CLEAN** audio track.
 
@@ -45,7 +45,7 @@ It walks through:
 
 See [`INSTALL-FIRST.txt`](INSTALL-FIRST.txt), [`INSTALL-SOURCE.md`](INSTALL-SOURCE.md), and [`README-SYNOLOGY.md`](README-SYNOLOGY.md).
 
-The included `docker-compose.yml` is a starting point. Change the host-side media paths, PUID/PGID, and any optional integration settings for your environment.
+The included `docker-compose.yml` is a starting point. Change the host-side media paths, PUID/PGID, and any optional integration settings for your environment. On Synology, the shipped `CENSORARR_SYNOLOGY_COMPAT_MODE=auto` keeps normal PUID/PGID behavior but can fall back to container root when DSM ACLs make the media mount inaccessible to that numeric identity.
 
 ### GPU Worker only
 
@@ -91,6 +91,10 @@ Censorarr's transcription engine is built on [faster-whisper](https://github.com
 A sincere thank-you to Guillaume Klein and everyone who has contributed to faster-whisper for making their work available to the open-source community.
 
 faster-whisper itself is based on OpenAI's [Whisper](https://github.com/openai/whisper) speech-recognition model, so Censorarr also gratefully acknowledges the original Whisper project and its contributors.
+
+## License
+
+Censorarr is released under the **GNU General Public License v3.0 (GPL-3.0)**. See [`LICENSE`](LICENSE).
 
 ## Project status
 
