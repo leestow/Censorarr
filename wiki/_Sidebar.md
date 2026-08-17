@@ -2,6 +2,7 @@
 
 - [Home](https://github.com/leestow/Censorarr/wiki/Home)
 - [Quick Start](https://github.com/leestow/Censorarr/wiki/Quick-Start)
+- [Windows](https://github.com/leestow/Censorarr/wiki/Windows-Installation)
 - [Synology Container Manager](https://github.com/leestow/Censorarr/wiki/Synology-Container-Manager)
 - [Docker / Linux](https://github.com/leestow/Censorarr/wiki/Docker-Linux)
 - [Setup Wizard](https://github.com/leestow/Censorarr/wiki/Setup-Wizard)

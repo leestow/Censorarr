@@ -6,13 +6,29 @@ Censorarr is a self-hosted clean-audio manager for movies and TV shows. It detec
 
 The complete installation, configuration, integration, GPU-worker, permissions, updating, and troubleshooting documentation is in the **[Censorarr Wiki / Documentation](wiki/Home.md)**.
 
-Start with **[Quick Start](wiki/Quick-Start.md)**, or go directly to the **[Synology Container Manager guide](wiki/Synology-Container-Manager.md)**.
+Start with **[Quick Start](wiki/Quick-Start.md)**. Platform-specific guides are available for **[Windows](wiki/Windows-Installation.md)**, **[Synology Container Manager](wiki/Synology-Container-Manager.md)**, and **[Docker / Linux](wiki/Docker-Linux.md)**.
+
+## Windows installer
+
+Censorarr can run natively on **Windows 11 x64** without Docker.
+
+**[Download the latest Windows installer from GitHub Releases](https://github.com/leestow/Censorarr/releases/latest)**
+
+The Windows installer is named:
+
+```text
+Censorarr-Setup-X.Y.Z.exe
+```
+
+It installs the application under `C:\Program Files\Censorarr`, stores persistent configuration and state under `C:\ProgramData\Censorarr`, bundles FFmpeg/FFprobe, and opens the same Censorarr web interface at `http://127.0.0.1:8087`. The Setup Wizard supports local drives, mapped drives, and reachable UNC network paths.
+
+See **[Windows Installation](wiki/Windows-Installation.md)** for the full guide.
 
 ## What is required?
 
 Only two things are required:
 
-1. A Movies and/or TV media folder mounted into Censorarr.
+1. A Movies and/or TV media folder available to Censorarr.
 2. A transcription engine: the local CPU, or the optional **Censorarr GPU Worker**.
 
 Everything else is optional:
@@ -42,12 +58,13 @@ It walks through:
 
 | What you want | What to install |
 |---|---|
-| Censorarr using CPU transcription | Main Censorarr project only |
-| Censorarr with NVIDIA GPU acceleration | Main Censorarr + GPU Worker |
+| Native Windows 11 x64 | `Censorarr-Setup-X.Y.Z.exe` from GitHub Releases |
+| Docker / Synology using CPU transcription | Main Censorarr project only |
+| Docker / Synology with NVIDIA GPU acceleration | Main Censorarr + GPU Worker |
 | GPU server for an existing Censorarr install | `gpu-worker/` only |
 | No Plex / Radarr / Sonarr / Bazarr | Main Censorarr standalone |
 
-### Main Censorarr
+### Docker / Synology Censorarr
 
 See [`INSTALL-FIRST.txt`](INSTALL-FIRST.txt), [`INSTALL-SOURCE.md`](INSTALL-SOURCE.md), and [`README-SYNOLOGY.md`](README-SYNOLOGY.md).
 

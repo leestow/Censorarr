@@ -1,0 +1,232 @@
+name: Build Windows Installer
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - "windows/**"
+      - ".github/workflows/build-windows-installer.yml"
+      - "app/**"
+      - "requirements.txt"
+      - "config.example.yaml"
+      - "en.json"
+      - "VERSION"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: windows-installer-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Read Censorarr version
+        shell: pwsh
+        run: |
+          $appVersion = (Get-Content VERSION -Raw).Trim()
+          if (-not $appVersion) { throw "VERSION is empty" }
+          $parts = $appVersion.Split(".")
+          if ($parts.Count -ne 3) { throw "VERSION must be MAJOR.MINOR.PATCH" }
+          $fileVersion = "$appVersion.0"
+          "CENSORARR_APP_VERSION=$appVersion" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          "CENSORARR_FILE_VERSION=$fileVersion" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          Write-Host "Building Censorarr $appVersion / Windows file version $fileVersion"
+
+      - name: Install Python build dependencies
+        shell: pwsh
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+          python -m pip install pyinstaller pillow
+
+      - name: Verify Windows path and Hugging Face cache safeguards
+        shell: pwsh
+        run: |
+          $env:CENSORARR_DATA_DIR = "$env:RUNNER_TEMP\Censorarr-PathTest"
+          @'
+          import os, sys
+          sys.path.insert(0, os.path.abspath("windows"))
+          import windows_launcher as wl
+          expected = str(wl.MODELS_DIR)
+          actual = wl._map_container_path_string("/config/models")
+          print(f"Whisper cache mapping: /config/models -> {actual}")
+          if actual != expected:
+              raise SystemExit(f"Expected {expected!r}, got {actual!r}")
+          if os.environ.get("HF_HUB_DISABLE_SYMLINKS") != "1":
+              raise SystemExit("HF_HUB_DISABLE_SYMLINKS is not enabled")
+          if os.environ.get("HF_HUB_DISABLE_XET") != "1":
+              raise SystemExit("HF_HUB_DISABLE_XET is not enabled")
+          print("HF Windows cache safeguards enabled")
+          '@ | python -
+
+      - name: Install FFmpeg and Inno Setup
+        shell: pwsh
+        run: |
+          choco install ffmpeg innosetup -y --no-progress
+
+      - name: Create Windows icon
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force windows/build | Out-Null
+          @'
+          from PIL import Image
+          img = Image.open("app/static/assets/censorarr-icon.png").convert("RGBA")
+          img.save("windows/build/censorarr.ico", format="ICO", sizes=[(16,16),(24,24),(32,32),(48,48),(64,64),(128,128),(256,256)])
+          '@ | python -
+
+      - name: Download Visual C++ runtime
+        shell: pwsh
+        run: |
+          Invoke-WebRequest -UseBasicParsing "https://aka.ms/vs/17/release/vc_redist.x64.exe" -OutFile "windows/build/vc_redist.x64.exe"
+
+      - name: Build native Censorarr executable
+        shell: pwsh
+        run: |
+          pyinstaller `
+            --noconfirm `
+            --clean `
+            --onedir `
+            --windowed `
+            --name Censorarr `
+            --icon windows/build/censorarr.ico `
+            --paths app `
+            --paths windows `
+            --distpath windows/dist `
+            --workpath windows/pyinstaller-build `
+            --add-data "app/static;static" `
+            --add-data "config.example.yaml;." `
+            --add-data "en.json;." `
+            --collect-all faster_whisper `
+            --collect-all ctranslate2 `
+            --collect-all tokenizers `
+            --collect-all huggingface_hub `
+            --collect-all av `
+            --hidden-import uvicorn.logging `
+            --hidden-import uvicorn.loops.auto `
+            --hidden-import uvicorn.protocols.http.auto `
+            --hidden-import uvicorn.protocols.websockets.auto `
+            --hidden-import uvicorn.lifespan.on `
+            windows/windows_entrypoint.py
+
+      - name: Bundle FFmpeg
+        shell: pwsh
+        run: |
+          $ffmpeg = Get-ChildItem "C:\ProgramData\chocolatey\lib\ffmpeg\tools" -Recurse -Filter ffmpeg.exe | Where-Object { $_.FullName -notlike "*\chocolatey\bin\*" } | Select-Object -First 1 -ExpandProperty FullName
+          $ffprobe = Get-ChildItem "C:\ProgramData\chocolatey\lib\ffmpeg\tools" -Recurse -Filter ffprobe.exe | Where-Object { $_.FullName -notlike "*\chocolatey\bin\*" } | Select-Object -First 1 -ExpandProperty FullName
+          if (-not $ffmpeg -or -not $ffprobe) { throw "Could not locate real FFmpeg binaries" }
+          Copy-Item $ffmpeg "windows/dist/Censorarr/ffmpeg.exe" -Force
+          Copy-Item $ffprobe "windows/dist/Censorarr/ffprobe.exe" -Force
+          & "windows/dist/Censorarr/ffmpeg.exe" -version | Select-Object -First 1
+
+      - name: Smoke test windowed executable without console streams
+        shell: pwsh
+        run: |
+          $env:CENSORARR_DATA_DIR = "$env:RUNNER_TEMP\Censorarr-SmokeTest"
+          if (Test-Path $env:CENSORARR_DATA_DIR) { Remove-Item -Recurse -Force $env:CENSORARR_DATA_DIR }
+          $proc = Start-Process -FilePath "windows/dist/Censorarr/Censorarr.exe" -ArgumentList "--background" -PassThru
+          $passed = $false
+          try {
+            for ($i = 0; $i -lt 45; $i++) {
+              Start-Sleep -Seconds 1
+              $proc.Refresh()
+              if ($proc.HasExited) { break }
+              try {
+                $setup = Invoke-RestMethod -Uri "http://127.0.0.1:8087/api/setup/status" -TimeoutSec 1
+                Write-Host "Windowed Censorarr responded; version=$($setup.version) required=$($setup.required)"
+                $passed = $true
+                break
+              } catch {
+              }
+            }
+          } finally {
+            Get-Process Censorarr -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+          }
+          if (-not $passed) {
+            $launcherLog = Join-Path $env:CENSORARR_DATA_DIR "logs\windows-launcher.log"
+            if (Test-Path $launcherLog) { Get-Content $launcherLog }
+            throw "Censorarr did not bring up its web API during no-console smoke test"
+          }
+
+      - name: Compile Setup.exe
+        shell: pwsh
+        working-directory: windows
+        run: |
+          New-Item -ItemType Directory -Force dist-installer | Out-Null
+          $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $iscc)) { throw "Inno Setup compiler was not found at $iscc" }
+          & $iscc "Censorarr.iss"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Get-ChildItem dist-installer
+
+      - name: Smoke test installed Setup.exe
+        shell: pwsh
+        run: |
+          $setupExe = "windows/dist-installer/Censorarr-Setup-$env:CENSORARR_APP_VERSION.exe"
+          $install = Start-Process -FilePath $setupExe -ArgumentList "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/TASKS=`"`"" -Wait -PassThru
+          if ($install.ExitCode -ne 0) { throw "Setup.exe failed with exit code $($install.ExitCode)" }
+          $installedExe = Join-Path $env:ProgramFiles "Censorarr\Censorarr.exe"
+          if (-not (Test-Path $installedExe)) { throw "Installed Censorarr.exe was not found" }
+          $proc = Start-Process -FilePath $installedExe -ArgumentList "--background" -PassThru
+          $passed = $false
+          try {
+            for ($i = 0; $i -lt 45; $i++) {
+              Start-Sleep -Seconds 1
+              $proc.Refresh()
+              if ($proc.HasExited) { break }
+              try {
+                $setup = Invoke-RestMethod -Uri "http://127.0.0.1:8087/api/setup/status" -TimeoutSec 1
+                Write-Host "Installed Censorarr responded; version=$($setup.version) required=$($setup.required)"
+                $passed = $true
+                break
+              } catch {
+              }
+            }
+          } finally {
+            Get-Process Censorarr -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+          }
+          if (-not $passed) {
+            $launcherLog = "C:\ProgramData\Censorarr\logs\windows-launcher.log"
+            if (Test-Path $launcherLog) { Get-Content $launcherLog }
+            throw "Installed Censorarr did not bring up its web API"
+          }
+
+      - name: Upload Windows installer artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Censorarr-Windows-Installer-${{ env.CENSORARR_APP_VERSION }}
+          path: windows/dist-installer/Censorarr-Setup-${{ env.CENSORARR_APP_VERSION }}.exe
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Publish installer to GitHub Release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $tag = "v$env:CENSORARR_APP_VERSION"
+          $asset = "windows/dist-installer/Censorarr-Setup-$env:CENSORARR_APP_VERSION.exe"
+
+          gh release view $tag *> $null
+          if ($LASTEXITCODE -ne 0) {
+            $notes = "Native Windows 11 x64 installer for Censorarr $env:CENSORARR_APP_VERSION.`n`nInstalls under Program Files, stores persistent data under C:\ProgramData\Censorarr, bundles FFmpeg/FFprobe and the Visual C++ runtime, and supports local CPU transcription or the optional remote Censorarr GPU Worker.`n`nDocker/Synology users can continue using the source and compose files from this release."
+            gh release create $tag --target $env:GITHUB_SHA --title "Censorarr v$env:CENSORARR_APP_VERSION" --notes $notes
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
+
+          gh release upload $tag $asset --clobber
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }

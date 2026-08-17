@@ -2,7 +2,29 @@
 
 This is the shortest path from zero to a working Censorarr 1.6.5 install.
 
-## 1. Download or clone Censorarr
+## Windows 11 x64
+
+The fastest Windows path is the native installer:
+
+1. Open the Censorarr Releases page.
+2. Download `Censorarr-Setup-X.Y.Z.exe`.
+3. Run the installer.
+4. Leave **Open Censorarr** checked when Setup finishes.
+5. Complete the Setup Wizard at `http://127.0.0.1:8087`.
+6. Use **Browse...** to select your Movies and TV folders.
+7. Start with **Dry Run** enabled.
+
+Latest Windows installer:
+
+```text
+https://github.com/leestow/Censorarr/releases/latest
+```
+
+See [Windows Installation](Windows-Installation.md) for mapped drives, UNC paths, updates, and troubleshooting.
+
+## Docker / Synology
+
+### 1. Download or clone Censorarr
 
 ```bash
 git clone https://github.com/leestow/Censorarr.git
@@ -15,7 +37,7 @@ On Synology, you can instead download/extract the repository into a Container Ma
 /volume1/docker/censorarr
 ```
 
-## 2. Edit `docker-compose.yml`
+### 2. Edit `docker-compose.yml`
 
 At minimum change:
 
@@ -48,7 +70,7 @@ The shipped application/config/work mounts are relative to the project folder an
 - ./work:/work
 ```
 
-## 3. Start Censorarr
+### 3. Start Censorarr
 
 ```bash
 docker compose up -d --build
@@ -66,7 +88,7 @@ so the UI is normally:
 http://SERVER-IP:8087
 ```
 
-## 4. Complete the Setup Wizard
+### 4. Complete the Setup Wizard
 
 A fresh install stays idle until the wizard is completed.
 
@@ -82,7 +104,7 @@ Recommended first-pass choices:
 
 This validates the standalone core before adding integrations.
 
-## 5. Watch the logs
+### 5. Watch the logs
 
 ```bash
 docker compose logs -f
@@ -96,17 +118,17 @@ docker logs -f censorarr
 
 You should see the media preflight pass before Whisper loads.
 
-## 6. Test a small media set
+### 6. Test a small media set
 
 Dry Run still needs to **read** the source media, but it does not perform the final media replacement.
 
 Once detection looks correct, enable Apply mode.
 
-## 7. Optional: add the GPU Worker
+### 7. Optional: add the GPU Worker
 
 See [Transcription & GPU Worker](Transcription-and-GPU-Worker.md).
 
-## 8. Run the self-test
+### 8. Run the self-test
 
 ```bash
 docker exec -it censorarr python /app/selftest.py
