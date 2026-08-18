@@ -32,8 +32,128 @@
     return el;
   }
 
+  async function saveAutoInstall(enabled, checkbox) {
+    if (checkbox) checkbox.disabled = true;
+    try {
+      const result = await request('/api/update/preferences', {
+        method: 'POST',
+        body: JSON.stringify({ auto_install: !!enabled }),
+      });
+      if (checkbox) checkbox.checked = !!result.auto_install;
+      return !!result.auto_install;
+    } catch (err) {
+      if (checkbox) checkbox.checked = !enabled;
+      throw err;
+    } finally {
+      if (checkbox) checkbox.disabled = false;
+    }
+  }
+
+  async function installNow(status, control, messageTarget) {
+    if (!confirm(`Install Censorarr ${status.latest_version} now?\n\nThe Docker/Synology app source will be backed up and the container will restart automatically.`)) return;
+    if (control) {
+      control.disabled = true;
+      control.textContent = 'Installing…';
+    }
+    try {
+      const result = await request('/api/update/install', { method: 'POST', body: '{}' });
+      if (!result.updated) {
+        if (control) control.textContent = 'Already current';
+        return;
+      }
+      if (messageTarget) messageTarget.textContent = `Update installed. Restarting Censorarr…`;
+      let tries = 0;
+      const poll = setInterval(async () => {
+        tries += 1;
+        try {
+          const health = await request('/api/health');
+          if (String(health.version || '') === String(result.to || '')) {
+            clearInterval(poll);
+            location.reload();
+          }
+        } catch (_) {}
+        if (tries > 90) clearInterval(poll);
+      }, 2000);
+    } catch (err) {
+      if (control) {
+        control.disabled = false;
+        control.textContent = 'Update now';
+      }
+      alert(`Censorarr update failed:\n\n${err.message || err}`);
+    }
+  }
+
+  function renderSettings(status) {
+    const page = document.querySelector('.settings-page[data-settings="backup"]');
+    if (!page || !status) return;
+
+    let section = document.getElementById('censorarrUpdateSettings');
+    if (!section) {
+      section = document.createElement('div');
+      section.className = 'section';
+      section.id = 'censorarrUpdateSettings';
+      section.innerHTML = `
+        <h3>Updates</h3>
+        <div class="statline"><span>Current version</span><b id="censorarrUpdateCurrent">—</b></div>
+        <div class="statline"><span>Latest stable release</span><b id="censorarrUpdateLatest">—</b></div>
+        <div class="field" style="margin-top:12px"><label class="checkrow"><input id="censorarrAutoUpdate" type="checkbox"> Automatically install safe updates</label><div class="footer-note" id="censorarrAutoUpdateHelp"></div></div>
+        <div class="toolbar"><button id="censorarrCheckUpdate">Check for updates</button><button class="good hidden" id="censorarrInstallUpdate">Update now</button><button class="hidden" id="censorarrReleaseNotes">Release notes</button></div>
+        <div class="footer-note" id="censorarrUpdateState"></div>
+      `;
+      page.appendChild(section);
+      document.getElementById('censorarrCheckUpdate').onclick = () => check(true);
+    }
+
+    const current = document.getElementById('censorarrUpdateCurrent');
+    const latest = document.getElementById('censorarrUpdateLatest');
+    const auto = document.getElementById('censorarrAutoUpdate');
+    const autoHelp = document.getElementById('censorarrAutoUpdateHelp');
+    const installButton = document.getElementById('censorarrInstallUpdate');
+    const notesButton = document.getElementById('censorarrReleaseNotes');
+    const message = document.getElementById('censorarrUpdateState');
+
+    current.textContent = status.current_version || 'Unknown';
+    latest.textContent = status.latest_version || (status.ok ? status.current_version || 'Unknown' : 'Unavailable');
+    auto.checked = !!status.auto_install_enabled;
+
+    const docker = status.platform === 'docker';
+    auto.disabled = !docker;
+    autoHelp.textContent = docker
+      ? 'When enabled, Censorarr checks periodically and installs verified source-only updates once the media worker is idle. Updates that require a container rebuild are never installed automatically.'
+      : status.platform === 'development'
+        ? 'Automatic stable updates are disabled while the experimental development branch is running.'
+        : 'Automatic installer replacement is not yet enabled on this platform; Censorarr will still alert you when a release is available.';
+    auto.onchange = async () => {
+      try {
+        await saveAutoInstall(auto.checked, auto);
+      } catch (err) {
+        alert(`Could not save update preference:\n\n${err.message || err}`);
+      }
+    };
+
+    installButton.classList.toggle('hidden', !(status.update_available && status.install && status.install.supported));
+    installButton.onclick = () => installNow(status, installButton, message);
+
+    notesButton.classList.toggle('hidden', !status.release_url);
+    notesButton.onclick = () => status.release_url && window.open(status.release_url, '_blank', 'noopener');
+
+    if (!status.ok) {
+      message.textContent = `Update check failed: ${status.error || 'unknown error'}`;
+    } else if (!status.update_available) {
+      message.textContent = 'Censorarr is up to date.';
+    } else if (status.install && status.install.supported) {
+      message.textContent = `Censorarr ${status.latest_version} is available and can be installed safely from this screen.`;
+    } else {
+      message.textContent = `Censorarr ${status.latest_version} is available. ${status.install?.reason || 'Manual update required.'}`;
+    }
+  }
+
   function show(status) {
-    if (!status || !status.update_available) return;
+    renderSettings(status);
+    if (!status || !status.update_available) {
+      removeBanner();
+      return;
+    }
     if (state.dismissed === String(status.latest_version || '')) return;
     removeBanner();
 
@@ -48,41 +168,15 @@
     ].join(';');
 
     const text = document.createElement('span');
-    text.innerHTML = `<strong>Censorarr ${String(status.latest_version || '')} is available.</strong> You are running ${String(status.current_version || '')}.`;
+    const strong = document.createElement('strong');
+    strong.textContent = `Censorarr ${String(status.latest_version || '')} is available.`;
+    text.append(strong, document.createTextNode(` You are running ${String(status.current_version || '')}.`));
     banner.appendChild(text);
 
     const install = status.install || {};
     if (install.supported) {
       const now = button('Update now', true);
-      now.onclick = async () => {
-        if (!confirm(`Install Censorarr ${status.latest_version} now?\n\nThe Docker/Synology app source will be backed up and the container will restart automatically.`)) return;
-        now.disabled = true;
-        now.textContent = 'Installing…';
-        try {
-          const result = await request('/api/update/install', { method: 'POST', body: '{}' });
-          if (!result.updated) {
-            now.textContent = 'Already current';
-            return;
-          }
-          text.innerHTML = `<strong>Update installed.</strong> Restarting Censorarr…`;
-          let tries = 0;
-          const poll = setInterval(async () => {
-            tries += 1;
-            try {
-              const health = await request('/api/health');
-              if (String(health.version || '') === String(result.to || '')) {
-                clearInterval(poll);
-                location.reload();
-              }
-            } catch (_) {}
-            if (tries > 90) clearInterval(poll);
-          }, 2000);
-        } catch (err) {
-          now.disabled = false;
-          now.textContent = 'Update now';
-          alert(`Censorarr update failed:\n\n${err.message || err}`);
-        }
-      };
+      now.onclick = () => installNow(status, now, text);
       banner.appendChild(now);
     } else {
       const reason = document.createElement('span');
@@ -105,18 +199,12 @@
       auto.type = 'checkbox';
       auto.checked = !!status.auto_install_enabled;
       auto.onchange = async () => {
-        auto.disabled = true;
         try {
-          const result = await request('/api/update/preferences', {
-            method: 'POST',
-            body: JSON.stringify({ auto_install: auto.checked }),
-          });
-          auto.checked = !!result.auto_install;
+          const value = await saveAutoInstall(auto.checked, auto);
+          const settingsAuto = document.getElementById('censorarrAutoUpdate');
+          if (settingsAuto) settingsAuto.checked = value;
         } catch (err) {
-          auto.checked = !auto.checked;
           alert(`Could not save update preference:\n\n${err.message || err}`);
-        } finally {
-          auto.disabled = false;
         }
       };
       label.append(auto, document.createTextNode('Auto-install safe updates'));
@@ -138,8 +226,12 @@
     try {
       const status = await request(`/api/update/status${force ? '?force=true' : ''}`);
       show(status);
+      return status;
     } catch (err) {
       console.debug('Censorarr update check failed:', err);
+      const fallback = { ok: false, error: String(err.message || err), current_version: 'Unknown', platform: 'unknown' };
+      renderSettings(fallback);
+      return fallback;
     }
   }
 
