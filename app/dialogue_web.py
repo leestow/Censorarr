@@ -8,6 +8,8 @@ from fastapi.responses import Response
 
 from dialogue_enhancement import DEFAULTS
 
+DEV_VERSION = "1.6.8-dev"
+
 
 def _payload(cfg: dict) -> dict:
     current = dict(DEFAULTS)
@@ -16,6 +18,11 @@ def _payload(cfg: dict) -> dict:
 
 
 def install(app, core) -> None:
+    # Clearly identify the experimental runtime without changing the repository VERSION
+    # file (which remains the stable release version and drives normal release workflows).
+    core.VERSION = DEV_VERSION
+    core.pc.VERSION = DEV_VERSION
+
     # A development checkout must never let the stable self-updater replace /app with
     # a release tarball. Keep update checking/release links available, but make the
     # install capability report unsupported while this feature branch is running.
