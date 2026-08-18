@@ -12,7 +12,7 @@ from pathlib import Path
 import censorarr as pc
 import dialogue_enhancement
 
-VERSION = "1.6.8"
+VERSION = "1.6.8-dev"
 pc.VERSION = VERSION
 pc.DEFAULT_CONFIG.setdefault("safety", {})["ensure_readable_output"] = True
 
