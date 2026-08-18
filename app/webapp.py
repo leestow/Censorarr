@@ -15,6 +15,7 @@ from pathlib import Path
 from fastapi import Depends, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse, Response
 
+import dialogue_web
 import updater
 import webapp_core as core
 
@@ -85,6 +86,9 @@ if os.name != "nt" and str(os.environ.get("CENSORARR_PLATFORM", "")).lower() != 
 
 
 app = core.app
+# Development-only APIs/settings. This also marks the updater platform as development
+# so stable self-update can never overwrite the feature checkout.
+dialogue_web.install(app, core)
 
 
 def _configured_media_roots() -> list[Path]:
@@ -393,6 +397,7 @@ def index_with_folder_picker(_: bool = Depends(core.auth)):
     html = (core.STATIC / "index.html").read_text(encoding="utf-8")
     injection = r'''<script src="/folder-picker.js?v=2"></script>
 <script src="/updater.js?v=1"></script>
+<script src="/dialogue-enhancement.js?v=1"></script>
 <script>
 window.reprocess = async function(path) {
   if (!confirm('Force reprocess ' + basename(path) + '? Existing CLEAN will be replaced, not duplicated.')) return;
@@ -407,7 +412,7 @@ window.reprocess = async function(path) {
   }
 };
 </script>'''
-    if '/updater.js?v=1' not in html:
+    if '/dialogue-enhancement.js?v=1' not in html:
         html = html.replace("</body>", injection + "</body>", 1)
     return HTMLResponse(html)
 
