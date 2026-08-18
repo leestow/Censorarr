@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.6.6
+
+- Fixed processed media retaining restrictive source permissions such as `0700`/`0600`, which could make a movie disappear from Plex after Censorarr replaced the original file.
+- Added `safety.ensure_readable_output` (default `true`). Censorarr now preserves existing owner/group and broader mode bits while guaranteeing read access for owner, group, and other on processed replacements.
+- Permission-setting failures are now logged instead of being silently ignored.
+- Main app runtime now reports version `1.6.6`.
+
 ## 1.6.5
 
 - Synology `auto` compatibility mode now scans nested Movies/TV folders (to depth 4) instead of checking only `/media` and `/tv`, so mixed DSM ACLs are detected before privileges are dropped.
