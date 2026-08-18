@@ -1,0 +1,46 @@
+name: Plex Metadata Cache Check
+
+on:
+  push:
+    branches:
+      - main
+      - family-safe-media
+    paths:
+      - 'app/plex_metadata_cache.py'
+      - 'app/plex_metadata_cache_selftest.py'
+      - 'app/censorarr_worker.py'
+      - '.github/workflows/plex-cache-check.yml'
+  pull_request:
+    branches:
+      - main
+      - family-safe-media
+    paths:
+      - 'app/plex_metadata_cache.py'
+      - 'app/plex_metadata_cache_selftest.py'
+      - 'app/censorarr_worker.py'
+      - '.github/workflows/plex-cache-check.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  plex-cache-selftest:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Compile Plex cache modules
+        run: |
+          python -m py_compile \
+            app/plex_metadata_cache.py \
+            app/plex_metadata_cache_selftest.py \
+            app/censorarr_worker.py
+
+      - name: Run Plex metadata cache self-test
+        run: python app/plex_metadata_cache_selftest.py
