@@ -58,6 +58,31 @@ def _preserve_processed_media_metadata(src_stat, temp_out: Path, cfg: dict) -> N
 
 core.pc.preserve_metadata = _preserve_processed_media_metadata
 
+
+# Docker/Synology runs the web server and media worker in separate Python processes.
+# The child must start through censorarr_worker.py so the same metadata safety patch is
+# installed inside the process that actually remuxes/replaces media files. Native
+# launchers have their own worker bootstrap and are intentionally left alone here.
+def _docker_worker_start(self) -> None:
+    with self.lock:
+        if self.proc and self.proc.poll() is None:
+            return
+        env = os.environ.copy()
+        env.pop("DRY_RUN", None)
+        self.proc = core.subprocess.Popen(["python", "/app/censorarr_worker.py"], env=env)
+    if not self.monitor_thread or not self.monitor_thread.is_alive():
+        self.monitor_thread = core.threading.Thread(
+            target=self._monitor,
+            daemon=True,
+            name="worker-supervisor",
+        )
+        self.monitor_thread.start()
+
+
+if os.name != "nt" and str(os.environ.get("CENSORARR_PLATFORM", "")).lower() != "linux-native":
+    core.WorkerSupervisor.start = _docker_worker_start
+
+
 # Re-export the ASGI application expected by existing Docker/Windows launchers.
 app = core.app
 
