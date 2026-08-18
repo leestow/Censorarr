@@ -1,4 +1,4 @@
-# Censorarr 1.6.5
+# Censorarr 1.6.6
 
 Censorarr is a self-hosted clean-audio manager for movies and TV shows. It detects configured profanity, keeps the original media streams, and adds or replaces a separate **CLEAN** audio track.
 
