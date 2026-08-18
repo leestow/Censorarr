@@ -1,4 +1,4 @@
-# Censorarr v1.6.5 - Movies + TV Shows watcher + Web Manager
+# Censorarr v1.6.6 - Movies + TV Shows watcher + Web Manager
 media_roots:
   - /media
 extensions: [.mkv, .mp4, .m4v]
@@ -198,6 +198,8 @@ safety:
   validate_output: true
   duration_tolerance_seconds: 2.0
   preserve_owner_mode: true
+  # Keep processed replacements readable by Plex/media services even if the source is owner-only.
+  ensure_readable_output: true
   backup_original: false
 
 reports:
