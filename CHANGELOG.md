@@ -8,6 +8,8 @@
 - Process/Reprocess failures from media detail pages now display the API error instead of appearing to do nothing.
 - Fixed the v1.6.6 Plex-readability protection not reaching the separate Docker/Synology media-worker process. Docker/Synology now launches through `censorarr_worker.py`, which installs the permission fix inside the process that actually remuxes and replaces the media file.
 - Processed replacements now restore owner/group first and apply permissions last, while guaranteeing read access for owner, group, and other so a restrictive `0600`/`0700` source cannot disappear from Plex after processing.
+- After a CLEAN track is successfully added or replaced, Censorarr now performs the existing targeted Plex refresh and then requests a targeted Plex **Analyze** for the same movie/episode so Plex re-reads the changed audio-stream list immediately.
+- Plex Analyze failures are logged as warnings and do not turn an otherwise successful CLEAN-track job into a failed media job.
 - Docker/Synology web and media-worker runtime now report `1.6.7`; the repository `VERSION` is `1.6.7`.
 
 ## 1.6.6
