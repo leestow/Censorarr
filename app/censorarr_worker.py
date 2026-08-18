@@ -10,10 +10,15 @@ import os
 from pathlib import Path
 
 import censorarr as pc
+import plex_metadata_cache
 
 VERSION = "1.6.8"
 pc.VERSION = VERSION
 pc.DEFAULT_CONFIG.setdefault("safety", {})["ensure_readable_output"] = True
+
+# Keep Plex metadata on disk across worker/container restarts and avoid repeatedly
+# downloading the entire Movies/TV library when a small section-change check is enough.
+plex_metadata_cache.install(pc)
 
 
 def preserve_processed_media_metadata(src_stat, temp_out: Path, cfg: dict) -> None:
@@ -76,7 +81,9 @@ def after_success_with_plex_analyze(
         return
 
     try:
-        item, _why = pc.plex_item_for(path, cfg, force_refresh=True)
+        # The Plex ratingKey for an existing library item is stable. Do not force a
+        # full-library metadata rebuild merely to obtain it after every processed file.
+        item, _why = pc.plex_item_for(path, cfg, force_refresh=False)
         rating_key = item.get("ratingKey") if item else None
         if not rating_key:
             pc.logging.warning("Plex analyze skipped; no ratingKey found for %s", path.name)
