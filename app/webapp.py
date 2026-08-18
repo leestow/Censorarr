@@ -15,11 +15,7 @@ from fastapi.responses import HTMLResponse, Response
 
 import webapp_core as core
 
-# v1.6.6: keep processed replacements readable by Plex/media services.  The engine
-# already centralizes post-remux metadata handling in pc.preserve_metadata(); patching
-# that hook here covers Docker, Synology, Windows, and native Linux launchers that all
-# enter through webapp:app, while preserving the source owner/group whenever possible.
-VERSION = "1.6.6"
+VERSION = "1.6.7"
 core.VERSION = VERSION
 core.pc.VERSION = VERSION
 core.pc.DEFAULT_CONFIG.setdefault("safety", {})["ensure_readable_output"] = True
@@ -109,20 +105,96 @@ def _allowed_media_mounts() -> list[Path]:
     return [] if os.name == "nt" else [Path("/media")]
 
 
+def _configured_path_mappings(cfg: dict) -> list[dict]:
+    """Return every configured external->local media path mapping.
+
+    Media-detail pages may receive paths from Sonarr/Radarr/Plex/Bazarr while the
+    process endpoint must operate on the local mounted path.  Accepting all known
+    mappings makes the Process button resilient to whichever integration supplied
+    the media row.
+    """
+    out: list[dict] = []
+
+    def add(rows) -> None:
+        for row in rows or []:
+            if not isinstance(row, dict):
+                continue
+            src = str(row.get("from", "")).strip()
+            dst = str(row.get("to", "")).strip()
+            if src and dst:
+                out.append({"from": src, "to": dst})
+
+    rating = cfg.get("rating_filter", {}) or {}
+    tv = cfg.get("tv", {}) or {}
+    tv_rating = tv.get("rating_filter", {}) or {}
+    arr = cfg.get("arr_integrations", {}) or {}
+    radarr = arr.get("radarr", {}) or {}
+    sonarr = arr.get("sonarr", {}) or {}
+    subtitle = cfg.get("subtitle_assist", {}) or {}
+    bazarr = subtitle.get("bazarr", {}) or {}
+
+    add(rating.get("plex_path_mappings", []))
+    add(tv_rating.get("plex_path_mappings", []))
+    add(radarr.get("path_mappings", []))
+    add(sonarr.get("path_mappings", []))
+    add(bazarr.get("path_mappings", []))
+    add(bazarr.get("tv_path_mappings", []))
+    return out
+
+
+def _mapped_media_candidate(raw: str, cfg: dict) -> Path | None:
+    value = str(raw or "").strip()
+    if not value:
+        return None
+    normalized = value.replace("\\", "/")
+    compare_value = normalized.lower() if os.name == "nt" else normalized
+    for mapping in _configured_path_mappings(cfg):
+        src = str(mapping["from"]).rstrip("/\\").replace("\\", "/")
+        dst = str(mapping["to"]).rstrip("/\\")
+        compare_src = src.lower() if os.name == "nt" else src
+        if compare_src and (compare_value == compare_src or compare_value.startswith(compare_src + "/")):
+            suffix = normalized[len(src):]
+            return Path(dst + suffix)
+    return None
+
+
 def safe_media_path(raw: str, must_exist: bool = True) -> Path:
     roots = _allowed_media_mounts()
     if not roots:
         raise HTTPException(403, "Configure a Movies or TV media folder first")
-    p = Path(raw)
-    if not p.is_absolute():
-        p = roots[0] / p
-    try:
-        resolved = p.resolve(strict=must_exist)
-    except FileNotFoundError:
-        raise HTTPException(404, "Path does not exist")
-    if not any(resolved == root or root in resolved.parents for root in roots):
-        raise HTTPException(403, "Only paths inside the configured media roots are allowed")
-    return resolved
+
+    raw_value = str(raw or "").strip()
+    cfg = core.pc.load_config(core.CONFIG)
+    candidates: list[Path] = []
+    if raw_value:
+        candidates.append(Path(raw_value))
+        mapped = _mapped_media_candidate(raw_value, cfg)
+        if mapped is not None and mapped not in candidates:
+            candidates.append(mapped)
+
+    if not candidates:
+        raise HTTPException(400, "No media path was supplied")
+
+    saw_existing_outside_root = False
+    for candidate in candidates:
+        p = candidate if candidate.is_absolute() else roots[0] / candidate
+        try:
+            resolved = p.resolve(strict=must_exist)
+        except FileNotFoundError:
+            continue
+        if any(resolved == root or root in resolved.parents for root in roots):
+            return resolved
+        saw_existing_outside_root = True
+
+    if saw_existing_outside_root:
+        raise HTTPException(
+            403,
+            "Media path is outside Censorarr's configured Movies/TV roots. Check the Sonarr/Radarr/Plex path mapping.",
+        )
+    raise HTTPException(
+        404,
+        "Media file was not found at the reported path or any configured mapped path. Check the Sonarr/Radarr/Plex path mapping.",
+    )
 
 
 # Existing routes in webapp_core resolve these names from that module at request time.
@@ -230,7 +302,21 @@ for route in list(app.router.routes):
 @app.get("/", response_class=HTMLResponse, include_in_schema=False)
 def index_with_folder_picker(_: bool = Depends(core.auth)):
     html = (core.STATIC / "index.html").read_text(encoding="utf-8")
-    injection = '<script src="/folder-picker.js?v=1"></script>'
-    if injection not in html:
+    injection = r'''<script src="/folder-picker.js?v=2"></script>
+<script>
+window.reprocess = async function(path) {
+  if (!confirm('Force reprocess ' + basename(path) + '? Existing CLEAN will be replaced, not duplicated.')) return;
+  try {
+    const result = await api('/api/process', {method:'POST', body:JSON.stringify({path})});
+    if (typeof refreshQueueMini === 'function') await refreshQueueMini();
+    if (typeof refresh === 'function') refresh();
+    return result;
+  } catch (e) {
+    alert('Could not process ' + basename(path) + ':\n\n' + (e && e.message ? e.message : String(e)));
+    throw e;
+  }
+};
+</script>'''
+    if '/folder-picker.js?v=2' not in html:
         html = html.replace("</body>", injection + "</body>", 1)
     return HTMLResponse(html)
