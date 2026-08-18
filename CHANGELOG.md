@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.6.8
+
+- Added automatic stable-release checks against GitHub Releases. When a newer Censorarr version is available, the web UI shows an update banner with the installed version, newest version, release-notes link, and install capability.
+- Added one-click Docker/Synology source updates. Censorarr downloads the release tarball, backs up the current `/app` source under `/config/update-backups`, installs the new app source, and gracefully restarts the container.
+- Added optional **Auto-install safe updates**. Automatic updates default to off and check every six hours when enabled.
+- Docker/Synology self-update is intentionally restricted to verified source-only releases. If `Dockerfile`, `requirements.txt`, `docker-entrypoint.sh`, `docker-compose.yml`, `en.json`, or `config.example.yaml` changed, Censorarr reports that a manual container/project update is required instead of risking a partial update.
+- Self-updates are deferred while a movie or episode is actively processing. Manual update requests are rejected until the current media job is finished or stopped.
+- Native Windows/Linux installations receive the update-available notification and release link; automatic installer replacement is not yet enabled for native packages.
+- Docker/Synology web and media-worker runtime now report `1.6.8`.
+
 ## 1.6.7
 
 - Fixed the **Process** button on TV episode detail pages when Sonarr reports a host/NAS path that differs from Censorarr's mounted `/tv` path.
@@ -53,7 +63,7 @@
 ## 1.6.4
 
 - Added Synology DSM ACL compatibility mode (`CENSORARR_SYNOLOGY_COMPAT_MODE=auto|true|false`).
-- `auto` keeps the configured PUID/PGID when possible and falls back to container root only when DSM ACLs block the media mount for that identity but root can read it.
+- `auto` keeps the configured PUID/PGID when possible and falls back to container root only when DSM ACLs block the media mount for that identity but root can read the same media tree.
 - Added media-root preflight before Whisper/model loading. Permission problems now keep the worker alive in a clear `permissions-error` state instead of causing a restart loop.
 - The first-run Setup Wizard now checks media access before setup can complete.
 - Dashboard status now identifies media permission failures.
