@@ -10,6 +10,7 @@ import os
 from pathlib import Path
 
 import censorarr as pc
+import dialogue_enhancement
 
 VERSION = "1.6.8"
 pc.VERSION = VERSION
@@ -56,6 +57,10 @@ def preserve_processed_media_metadata(src_stat, temp_out: Path, cfg: dict) -> No
 
 
 pc.preserve_metadata = preserve_processed_media_metadata
+
+# Experimental feature branch only. The installer adds config defaults and wraps the
+# normal CLEAN remux/validation path. It is disabled until explicitly enabled.
+dialogue_enhancement.install(pc)
 
 
 _original_after_success = pc.after_success
