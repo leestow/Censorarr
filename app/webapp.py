@@ -15,9 +15,55 @@ from fastapi.responses import HTMLResponse, Response
 
 import webapp_core as core
 
-# Re-export the ASGI application and version expected by existing Docker/Windows launchers.
+# v1.6.6: keep processed replacements readable by Plex/media services.  The engine
+# already centralizes post-remux metadata handling in pc.preserve_metadata(); patching
+# that hook here covers Docker, Synology, Windows, and native Linux launchers that all
+# enter through webapp:app, while preserving the source owner/group whenever possible.
+VERSION = "1.6.6"
+core.VERSION = VERSION
+core.pc.VERSION = VERSION
+core.pc.DEFAULT_CONFIG.setdefault("safety", {})["ensure_readable_output"] = True
+
+
+def _preserve_processed_media_metadata(src_stat, temp_out: Path, cfg: dict) -> None:
+    safety = cfg.get("safety", {})
+    preserve_owner_mode = bool(safety.get("preserve_owner_mode", True))
+    ensure_readable_output = bool(safety.get("ensure_readable_output", True))
+
+    if not preserve_owner_mode and not ensure_readable_output:
+        return
+
+    # Preserve ownership first because POSIX chown can clear special permission bits.
+    if preserve_owner_mode:
+        try:
+            os.chown(temp_out, src_stat.st_uid, src_stat.st_gid)
+        except (OSError, AttributeError, PermissionError) as exc:
+            core.pc.logging.debug("Could not preserve owner/group on %s: %s", temp_out, exc)
+
+    if preserve_owner_mode:
+        target_mode = src_stat.st_mode & 0o7777
+    else:
+        try:
+            target_mode = temp_out.stat().st_mode & 0o7777
+        except OSError as exc:
+            core.pc.logging.warning("Could not read output permissions for %s: %s", temp_out, exc)
+            return
+
+    # Preserve any broader source permissions, but never allow a processed media file
+    # to become owner-only (0600/0700). Plex and other media services need read access.
+    if ensure_readable_output:
+        target_mode |= 0o444
+
+    try:
+        os.chmod(temp_out, target_mode)
+    except OSError as exc:
+        core.pc.logging.warning("Could not set processed-media permissions on %s: %s", temp_out, exc)
+
+
+core.pc.preserve_metadata = _preserve_processed_media_metadata
+
+# Re-export the ASGI application expected by existing Docker/Windows launchers.
 app = core.app
-VERSION = core.VERSION
 
 
 def _configured_media_roots() -> list[Path]:
