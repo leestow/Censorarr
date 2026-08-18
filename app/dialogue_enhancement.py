@@ -213,7 +213,13 @@ def install(pc) -> None:
         clean_cfg = cfg.get("clean_track", {})
         if bool(clean_cfg.get("place_clean_first", True)) and clean_rel != 0:
             raise RuntimeError(f"Validation failed: CLEAN audio was expected first but is audio stream {clean_rel}")
-        if bool(clean_cfg.get("make_default", False)) and not bool((clean_stream.get("disposition") or {}).get("default")):
+        # Dialogue Enhanced may intentionally become the sole default. Only require
+        # CLEAN to remain default when the user did not request that override.
+        if (
+            bool(clean_cfg.get("make_default", False))
+            and not bool(dcfg.get("make_default", False))
+            and not bool((clean_stream.get("disposition") or {}).get("default"))
+        ):
             raise RuntimeError("Validation failed: CLEAN audio was expected to be marked default")
 
         src_v = [s for s in src_probe.get("streams", []) if s.get("codec_type") == "video"]
