@@ -1,24 +1,32 @@
 """Censorarr web entrypoint.
 
-The main application remains in webapp_core.py.  This thin entrypoint adds the
-cross-platform media-folder picker and keeps media browsing constrained to the
-configured libraries.  Keeping these additions here also preserves compatibility
-with launchers that already start ``webapp:app``.
+The main application remains in webapp_core.py. This thin entrypoint adds the
+cross-platform media-folder picker, stable-release updater, and keeps media browsing
+constrained to the configured libraries. Keeping these additions here also preserves
+compatibility with launchers that already start ``webapp:app``.
 """
 from __future__ import annotations
 
 import os
+import threading
+import time
 from pathlib import Path
 
-from fastapi import Depends, HTTPException, Query
+from fastapi import Depends, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse, Response
 
+import updater
 import webapp_core as core
 
 VERSION = "1.6.7"
 core.VERSION = VERSION
 core.pc.VERSION = VERSION
 core.pc.DEFAULT_CONFIG.setdefault("safety", {})["ensure_readable_output"] = True
+core.pc.DEFAULT_CONFIG.setdefault("updates", {
+    "check_enabled": True,
+    "check_interval_hours": 6,
+    "auto_install": False,
+})
 
 
 def _preserve_processed_media_metadata(src_stat, temp_out: Path, cfg: dict) -> None:
@@ -134,7 +142,7 @@ def _configured_path_mappings(cfg: dict) -> list[dict]:
     """Return every configured external->local media path mapping.
 
     Media-detail pages may receive paths from Sonarr/Radarr/Plex/Bazarr while the
-    process endpoint must operate on the local mounted path.  Accepting all known
+    process endpoint must operate on the local mounted path. Accepting all known
     mappings makes the Process button resilient to whichever integration supplied
     the media row.
     """
@@ -310,11 +318,94 @@ def media_roots(_: bool = Depends(core.auth)):
     }
 
 
+def _updates_cfg(cfg: dict) -> dict:
+    raw = cfg.get("updates", {}) or {}
+    return {
+        "check_enabled": bool(raw.get("check_enabled", True)),
+        "check_interval_hours": max(1, int(raw.get("check_interval_hours", 6) or 6)),
+        "auto_install": bool(raw.get("auto_install", False)),
+    }
+
+
+def _worker_idle_for_update() -> tuple[bool, str]:
+    hb = core.read_json(core.HEARTBEAT, {})
+    status = str(hb.get("status") or "starting").lower()
+    safe = {"idle", "paused", "scanning", "starting", "blocked", "setup-required", "waiting-subtitle", "permissions-error"}
+    if status in safe:
+        return True, status
+    current = str(hb.get("current") or "").strip()
+    return False, f"{status}: {current}" if current else status
+
+
+def _save_update_preference(auto_install: bool) -> None:
+    raw = core.yaml.safe_load(core.CONFIG.read_text(encoding="utf-8")) or {}
+    updates = raw.setdefault("updates", {})
+    updates["check_enabled"] = bool(updates.get("check_enabled", True))
+    updates["check_interval_hours"] = max(1, int(updates.get("check_interval_hours", 6) or 6))
+    updates["auto_install"] = bool(auto_install)
+    tmp = core.CONFIG.with_suffix(".tmp")
+    tmp.write_text(core.yaml.safe_dump(raw, sort_keys=False), encoding="utf-8")
+    os.replace(tmp, core.CONFIG)
+
+
+@app.get("/api/update/status")
+def update_status(force: bool = Query(False), _: bool = Depends(core.auth)):
+    cfg = core.pc.load_config(core.CONFIG)
+    pref = _updates_cfg(cfg)
+    if not pref["check_enabled"] and not force:
+        return {
+            "ok": True,
+            "current_version": VERSION,
+            "latest_version": VERSION,
+            "update_available": False,
+            "checks_disabled": True,
+            "auto_install_enabled": pref["auto_install"],
+        }
+    result = updater.check(
+        VERSION,
+        force=bool(force),
+        cache_seconds=pref["check_interval_hours"] * 3600,
+    )
+    result["auto_install_enabled"] = pref["auto_install"]
+    return result
+
+
+@app.post("/api/update/preferences")
+async def update_preferences(request: Request, _: bool = Depends(core.auth)):
+    body = await request.json()
+    enabled = bool(body.get("auto_install", False))
+    _save_update_preference(enabled)
+    return {"ok": True, "auto_install": enabled}
+
+
+@app.post("/api/update/install")
+def install_update(_: bool = Depends(core.auth)):
+    idle, detail = _worker_idle_for_update()
+    if not idle:
+        raise HTTPException(409, f"Finish or stop the current media job before updating Censorarr ({detail}).")
+    try:
+        result = updater.install(VERSION)
+    except Exception as exc:
+        raise HTTPException(409, str(exc))
+    if result.get("updated"):
+        core.pc.logging.info("Installed Censorarr update %s -> %s; restarting container", result.get("from"), result.get("to"))
+        updater.schedule_restart()
+    return result
+
+
 @app.get("/folder-picker.js", include_in_schema=False)
 def folder_picker_script(_: bool = Depends(core.auth)):
     js = core.STATIC / "folder-picker.js"
     if not js.is_file():
         raise HTTPException(404, "Folder picker script not found")
+    return Response(js.read_text(encoding="utf-8"), media_type="application/javascript")
+
+
+@app.get("/updater.js", include_in_schema=False)
+def updater_script(_: bool = Depends(core.auth)):
+    js = core.STATIC / "updater.js"
+    if not js.is_file():
+        raise HTTPException(404, "Updater script not found")
     return Response(js.read_text(encoding="utf-8"), media_type="application/javascript")
 
 
@@ -328,6 +419,7 @@ for route in list(app.router.routes):
 def index_with_folder_picker(_: bool = Depends(core.auth)):
     html = (core.STATIC / "index.html").read_text(encoding="utf-8")
     injection = r'''<script src="/folder-picker.js?v=2"></script>
+<script src="/updater.js?v=1"></script>
 <script>
 window.reprocess = async function(path) {
   if (!confirm('Force reprocess ' + basename(path) + '? Existing CLEAN will be replaced, not duplicated.')) return;
@@ -342,6 +434,41 @@ window.reprocess = async function(path) {
   }
 };
 </script>'''
-    if '/folder-picker.js?v=2' not in html:
+    if '/updater.js?v=1' not in html:
         html = html.replace("</body>", injection + "</body>", 1)
     return HTMLResponse(html)
+
+
+def _automatic_update_loop() -> None:
+    # Give normal startup/media preflight time to settle before the first background check.
+    time.sleep(45)
+    while True:
+        try:
+            cfg = core.pc.load_config(core.CONFIG)
+            pref = _updates_cfg(cfg)
+            interval = max(1, pref["check_interval_hours"]) * 3600
+            if pref["check_enabled"] and pref["auto_install"]:
+                status = updater.check(VERSION, force=False, cache_seconds=interval)
+                install = status.get("install") or {}
+                if status.get("update_available") and install.get("supported"):
+                    idle, detail = _worker_idle_for_update()
+                    if idle:
+                        result = updater.install(VERSION)
+                        if result.get("updated"):
+                            core.pc.logging.info(
+                                "Automatically installed Censorarr update %s -> %s; restarting container",
+                                result.get("from"), result.get("to"),
+                            )
+                            updater.schedule_restart()
+                            return
+                    else:
+                        core.pc.logging.info("Censorarr update is available; automatic install deferred until idle (%s)", detail)
+                elif status.get("update_available") and not install.get("supported"):
+                    core.pc.logging.info("Censorarr update available but manual update is required: %s", install.get("reason"))
+            time.sleep(interval)
+        except Exception as exc:
+            core.pc.logging.warning("Automatic update check failed: %s", exc)
+            time.sleep(3600)
+
+
+threading.Thread(target=_automatic_update_loop, daemon=True, name="censorarr-auto-updater").start()
