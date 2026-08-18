@@ -11,10 +11,16 @@ from pathlib import Path
 
 import censorarr as pc
 import dialogue_enhancement
+import plex_metadata_cache
 
 VERSION = "1.6.8-dev"
 pc.VERSION = VERSION
 pc.DEFAULT_CONFIG.setdefault("safety", {})["ensure_readable_output"] = True
+
+# Keep the stable persistent Plex cache on the development worker too. This is
+# installed before experimental audio features because it only replaces Plex metadata
+# indexing and is independent of the remux/validation hooks below.
+plex_metadata_cache.install(pc)
 
 
 def preserve_processed_media_metadata(src_stat, temp_out: Path, cfg: dict) -> None:
@@ -81,7 +87,9 @@ def after_success_with_plex_analyze(
         return
 
     try:
-        item, _why = pc.plex_item_for(path, cfg, force_refresh=True)
+        # ratingKey is stable for an existing Plex item. The persistent cache performs
+        # its own lightweight change check, so Analyze must not force a full library pull.
+        item, _why = pc.plex_item_for(path, cfg, force_refresh=False)
         rating_key = item.get("ratingKey") if item else None
         if not rating_key:
             pc.logging.warning("Plex analyze skipped; no ratingKey found for %s", path.name)
