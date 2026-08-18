@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import os
-from pathlib import Path
 
 from fastapi import Depends, HTTPException, Request
 from fastapi.responses import Response
@@ -17,6 +16,12 @@ def _payload(cfg: dict) -> dict:
 
 
 def install(app, core) -> None:
+    # A development checkout must never let the stable self-updater replace /app with
+    # a release tarball. Keep update checking/release links available, but make the
+    # install capability report unsupported while this feature branch is running.
+    import updater
+    updater._platform = lambda: "development"
+
     defaults = core.pc.DEFAULT_CONFIG.setdefault("dialogue_enhancement", {})
     for key, value in DEFAULTS.items():
         defaults.setdefault(key, value)
@@ -38,9 +43,7 @@ def install(app, core) -> None:
         current["title"] = title
 
         language = str(body.get("language", current.get("language", "eng")) or "eng").strip().lower()
-        if not language:
-            language = "eng"
-        current["language"] = language[:12]
+        current["language"] = (language or "eng")[:12]
 
         strength = str(body.get("strength", current.get("strength", "medium")) or "medium").strip().lower()
         if strength not in {"light", "medium", "strong"}:
