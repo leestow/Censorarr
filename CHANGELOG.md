@@ -6,7 +6,9 @@
 - Manual processing now retries the requested path through every configured Sonarr, Radarr, Plex, and Bazarr path mapping before rejecting it.
 - Processing remains restricted to the configured Censorarr Movies/TV roots after mapping, preserving the existing filesystem security boundary.
 - Process/Reprocess failures from media detail pages now display the API error instead of appearing to do nothing.
-- Aligned the main app, processing engine, integrations layer, and GPU worker version reporting to `1.6.7`.
+- Fixed the v1.6.6 Plex-readability protection not reaching the separate Docker/Synology media-worker process. Docker/Synology now launches through `censorarr_worker.py`, which installs the permission fix inside the process that actually remuxes and replaces the media file.
+- Processed replacements now restore owner/group first and apply permissions last, while guaranteeing read access for owner, group, and other so a restrictive `0600`/`0700` source cannot disappear from Plex after processing.
+- Docker/Synology web and media-worker runtime now report `1.6.7`; the repository `VERSION` is `1.6.7`.
 
 ## 1.6.6
 
