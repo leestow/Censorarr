@@ -1,8 +1,8 @@
 """Docker/Synology worker entrypoint for Censorarr.
 
-The web server and media worker are separate Python processes.  Runtime patches made
-inside webapp.py do not cross that process boundary, so worker-specific safety fixes
-must be installed here before censorarr.main() starts.
+The web server and media worker are separate Python processes. Runtime patches made
+inside webapp.py do not cross that process boundary, so worker-specific safety and
+post-processing fixes must be installed here before censorarr.main() starts.
 """
 from __future__ import annotations
 
@@ -19,9 +19,9 @@ pc.DEFAULT_CONFIG.setdefault("safety", {})["ensure_readable_output"] = True
 def preserve_processed_media_metadata(src_stat, temp_out: Path, cfg: dict) -> None:
     """Preserve source metadata while guaranteeing Plex-readable output.
 
-    Censorarr remuxes to a new inode and replaces the original media file.  A source
+    Censorarr remuxes to a new inode and replaces the original media file. A source
     mode such as 0600/0700 must not be copied verbatim to that replacement because
-    Plex commonly runs as a different user.  Ownership is restored first because a
+    Plex commonly runs as a different user. Ownership is restored first because a
     POSIX chown may clear special mode bits; chmod is deliberately last.
     """
     safety = cfg.get("safety", {}) or {}
@@ -56,6 +56,48 @@ def preserve_processed_media_metadata(src_stat, temp_out: Path, cfg: dict) -> No
 
 
 pc.preserve_metadata = preserve_processed_media_metadata
+
+
+_original_after_success = pc.after_success
+
+
+def after_success_with_plex_analyze(
+    path: Path,
+    cfg: dict,
+    status: str,
+    rating: str | None,
+    report: str | None,
+) -> None:
+    """Run normal completion actions, then ask Plex to re-analyze changed media.
+
+    A metadata refresh alone can leave Plex's cached audio-stream list stale when
+    Censorarr replaces a file in place. A targeted Analyze forces Plex to read the
+    media properties again so newly-added CLEAN audio streams appear in the player.
+    """
+    _original_after_success(path, cfg, status, rating, report)
+
+    plex_cfg = cfg.get("plex_activity", {}) or {}
+    if status != "applied" or not bool(plex_cfg.get("refresh_after_processing", True)):
+        return
+
+    try:
+        item, _why = pc.plex_item_for(path, cfg, force_refresh=True)
+        rating_key = item.get("ratingKey") if item else None
+        if not rating_key:
+            pc.logging.warning("Plex analyze skipped; no ratingKey found for %s", path.name)
+            return
+        pc.integ.plex_request(
+            cfg,
+            f"/library/metadata/{rating_key}/analyze",
+            method="PUT",
+            timeout=30,
+        )
+        pc.logging.info("Requested Plex analyze for %s", path.name)
+    except Exception as exc:
+        pc.logging.warning("Plex analyze after processing failed for %s: %s", path.name, exc)
+
+
+pc.after_success = after_success_with_plex_analyze
 
 
 if __name__ == "__main__":
