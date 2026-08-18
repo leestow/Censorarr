@@ -1,0 +1,37 @@
+name: Dev Dialogue Enhancement Check
+
+on:
+  push:
+    branches:
+      - family-safe-media
+  pull_request:
+    branches:
+      - family-safe-media
+
+permissions:
+  contents: read
+
+jobs:
+  dialogue-selftest:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Compile development modules
+        run: |
+          python -m py_compile \
+            app/dialogue_enhancement.py \
+            app/dialogue_web.py \
+            app/dialogue_selftest.py \
+            app/censorarr_worker.py \
+            app/webapp.py \
+            app/updater.py
+
+      - name: Run Dialogue Enhancement self-test
+        run: python app/dialogue_selftest.py
