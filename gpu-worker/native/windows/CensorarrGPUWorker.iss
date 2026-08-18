@@ -60,9 +60,9 @@ Name: "{group}\NVIDIA Driver Download"; Filename: "https://www.nvidia.com/Downlo
 [Run]
 Filename: "{tmp}\vc_redist.x64.exe"; Parameters: "/install /quiet /norestart"; StatusMsg: "Installing Microsoft Visual C++ Runtime..."; Flags: waituntilterminated
 Filename: "{app}\{#MyAppExeName}"; Parameters: "--ensure-config"; StatusMsg: "Creating GPU Worker configuration..."; Flags: runhidden waituntilterminated
-Filename: "{app}\{#MyAppExeName}"; Parameters: "--install-runtime"; StatusMsg: "Downloading and verifying NVIDIA CUDA 12 / cuBLAS / cuDNN runtime libraries (about 1-2 GB)..."; Flags: runhidden waituntilterminated ignoreerrors; Tasks: downloadruntime
+Filename: "{app}\{#MyAppExeName}"; Parameters: "--install-runtime"; StatusMsg: "Downloading and verifying NVIDIA CUDA 12 / cuBLAS / cuDNN runtime libraries (about 1-2 GB)..."; Flags: runhidden waituntilterminated; Tasks: downloadruntime
 Filename: "{app}\{#MyAppExeName}"; Parameters: "--install-service"; StatusMsg: "Installing GPU Worker startup task..."; Flags: runhidden waituntilterminated
-Filename: "{app}\{#MyAppExeName}"; Parameters: "--start-service"; StatusMsg: "Starting Censorarr GPU Worker..."; Flags: runhidden waituntilterminated ignoreerrors
+Filename: "{app}\{#MyAppExeName}"; Parameters: "--start-service"; StatusMsg: "Starting Censorarr GPU Worker..."; Flags: runhidden waituntilterminated
 Filename: "{sys}\notepad.exe"; Parameters: """{commonappdata}\CensorarrGPUWorker\worker.env"""; Description: "Open GPU Worker configuration and token"; Flags: nowait postinstall skipifsilent
 
 [UninstallRun]

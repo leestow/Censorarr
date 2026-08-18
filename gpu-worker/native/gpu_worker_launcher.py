@@ -13,6 +13,7 @@ import tempfile
 import urllib.request
 import zipfile
 from pathlib import Path
+from typing import Iterable
 
 mp.freeze_support()
 
@@ -59,8 +60,10 @@ def _load_env_file(path: Path) -> None:
 
 
 def _ensure_config(path: Path = CONFIG_FILE) -> Path:
+    # Create only the paths selected by the active configuration/environment.
+    # The Debian package's postinst owns creation of /var/lib/censorarr-gpu-worker;
+    # native/CI launches may intentionally redirect all writable state elsewhere.
     path.parent.mkdir(parents=True, exist_ok=True)
-    DATA_ROOT.mkdir(parents=True, exist_ok=True)
     MODEL_DIR.mkdir(parents=True, exist_ok=True)
     RUNTIME_DIR.mkdir(parents=True, exist_ok=True)
     if path.exists():
@@ -221,6 +224,7 @@ def install_runtime(*, require_driver: bool = True) -> int:
 
     total_download = sum(int(x.get("size") or 0) for x in manifest.get("packages", []))
     usage = shutil.disk_usage(RUNTIME_DIR.parent if RUNTIME_DIR.parent.exists() else DATA_ROOT.parent)
+    # Wheels are compressed and then extracted. Keep comfortable headroom.
     required_free = max(4 * 1024**3, total_download * 3)
     if usage.free < required_free:
         raise RuntimeError(
