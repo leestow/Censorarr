@@ -1,0 +1,116 @@
+name: Sync Release Notes
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - "CHANGELOG.md"
+      - "VERSION"
+      - ".github/workflows/sync-release-notes.yml"
+  workflow_run:
+    workflows:
+      - "Build Windows Installer"
+      - "Build Linux Package"
+      - "Build Native GPU Worker"
+    types:
+      - completed
+
+permissions:
+  contents: write
+
+concurrency:
+  group: sync-release-notes
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    if: ${{ github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success' }}
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Check out main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - name: Add changelog sections to GitHub Releases
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from pathlib import Path
+          import json
+          import re
+          import subprocess
+          import tempfile
+
+          repo = "${{ github.repository }}"
+          changelog = Path("CHANGELOG.md").read_text(encoding="utf-8")
+
+          # Parse sections beginning with "## X.Y.Z" and ending at the next version heading.
+          matches = list(re.finditer(r"(?m)^##\s+(\d+\.\d+\.\d+)\s*$", changelog))
+          sections = {}
+          for i, match in enumerate(matches):
+              version = match.group(1)
+              start = match.end()
+              end = matches[i + 1].start() if i + 1 < len(matches) else len(changelog)
+              sections[version] = changelog[start:end].strip()
+
+          raw = subprocess.check_output(
+              ["gh", "release", "list", "--repo", repo, "--limit", "100", "--json", "tagName,isDraft"],
+              text=True,
+          )
+          releases = json.loads(raw)
+
+          start_marker = "<!-- CENSORARR-CHANGES-START -->"
+          end_marker = "<!-- CENSORARR-CHANGES-END -->"
+          managed_re = re.compile(
+              re.escape(start_marker) + r".*?" + re.escape(end_marker),
+              flags=re.S,
+          )
+
+          updated = []
+          skipped = []
+
+          for release in releases:
+              if release.get("isDraft"):
+                  continue
+              tag = str(release.get("tagName") or "").strip()
+              version = tag[1:] if tag.startswith("v") else tag
+              section = sections.get(version)
+              if not section:
+                  skipped.append(tag)
+                  continue
+
+              body = subprocess.check_output(
+                  ["gh", "release", "view", tag, "--repo", repo, "--json", "body", "--jq", ".body"],
+                  text=True,
+              ).rstrip()
+
+              # Remove only the block managed by this workflow; preserve everything else.
+              base = managed_re.sub("", body).strip()
+              block = (
+                  f"{start_marker}\n"
+                  f"## Changes\n\n"
+                  f"{section}\n"
+                  f"{end_marker}"
+              )
+              new_body = f"{base}\n\n{block}\n" if base else f"{block}\n"
+
+              with tempfile.NamedTemporaryFile("w", encoding="utf-8", delete=False) as fh:
+                  fh.write(new_body)
+                  notes_path = fh.name
+
+              subprocess.check_call(
+                  ["gh", "release", "edit", tag, "--repo", repo, "--notes-file", notes_path]
+              )
+              Path(notes_path).unlink(missing_ok=True)
+              updated.append(tag)
+
+          print("Updated releases:", ", ".join(updated) if updated else "none")
+          if skipped:
+              print("Skipped releases without matching CHANGELOG sections:", ", ".join(skipped))
+          PY
