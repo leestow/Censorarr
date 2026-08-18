@@ -46,6 +46,23 @@ The package installs Censorarr under `/opt/censorarr`, keeps persistent data und
 
 See **[Native Linux Installation](wiki/Linux-Installation.md)** for media permissions, LAN access, service commands, and updating.
 
+## Native GPU Worker installers
+
+The optional NVIDIA GPU Worker now has native installers too:
+
+```text
+Windows: Censorarr-GPU-Worker-Setup-X.Y.Z.exe
+Linux:   Censorarr-GPU-Worker-X.Y.Z-linux-amd64.deb
+```
+
+**[Download GPU Worker installers from GitHub Releases](https://github.com/leestow/Censorarr/releases/latest)**
+
+The native GPU Worker installers generate the worker token, install/start the worker service/task, and download the pinned CUDA 12 / cuBLAS / cuDNN runtime libraries directly from NVIDIA-maintained PyPI packages. Each runtime wheel is verified by SHA-256 and extracted into the worker's private data directory. The NVIDIA display/compute driver remains a prerequisite and is not replaced by Censorarr.
+
+Docker GPU Worker deployment remains fully supported.
+
+See **[Transcription & GPU Worker](wiki/Transcription-and-GPU-Worker.md)** for the complete native and Docker worker guides.
+
 ## What is required?
 
 Only two things are required:
@@ -82,9 +99,10 @@ It walks through:
 |---|---|
 | Native Windows 11 x64 | `Censorarr-Setup-X.Y.Z.exe` from GitHub Releases |
 | Native Debian/Ubuntu x86_64 | `Censorarr-X.Y.Z-linux-amd64.deb` from GitHub Releases |
+| Native Windows GPU Worker | `Censorarr-GPU-Worker-Setup-X.Y.Z.exe` from GitHub Releases |
+| Native Debian/Ubuntu GPU Worker | `Censorarr-GPU-Worker-X.Y.Z-linux-amd64.deb` from GitHub Releases |
 | Docker / Synology using CPU transcription | Main Censorarr project only |
-| Docker / Synology with NVIDIA GPU acceleration | Main Censorarr + GPU Worker |
-| GPU server for an existing Censorarr install | `gpu-worker/` only |
+| Docker / Synology with NVIDIA GPU acceleration | Main Censorarr + Docker GPU Worker |
 | No Plex / Radarr / Sonarr / Bazarr | Main Censorarr standalone |
 
 ### Docker / Synology Censorarr
@@ -93,9 +111,11 @@ See [`INSTALL-FIRST.txt`](INSTALL-FIRST.txt), [`INSTALL-SOURCE.md`](INSTALL-SOUR
 
 The included `docker-compose.yml` is a starting point. Change the host-side media paths, PUID/PGID, and any optional integration settings for your environment. On Synology, the shipped `CENSORARR_SYNOLOGY_COMPAT_MODE=auto` keeps normal PUID/PGID behavior but can fall back to container root when DSM ACLs make the media mount inaccessible to that numeric identity.
 
-### GPU Worker only
+### GPU Worker
 
-The GPU worker is a self-contained Docker project inside [`gpu-worker/`](gpu-worker/).
+Native installer and Docker options are documented in [`gpu-worker/README.md`](gpu-worker/README.md).
+
+Docker quick start:
 
 ```bash
 git clone https://github.com/leestow/Censorarr.git
@@ -103,8 +123,6 @@ cd Censorarr/gpu-worker
 # Edit docker-compose.yml and set ASR_WORKER_TOKEN
 docker compose up -d --build
 ```
-
-See [`gpu-worker/README.md`](gpu-worker/README.md) for the full GPU-worker setup.
 
 ## How CLEAN audio works
 

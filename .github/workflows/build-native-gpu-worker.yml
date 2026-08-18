@@ -1,0 +1,452 @@
+name: Build Native GPU Worker
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - "gpu-worker/**"
+      - ".github/workflows/build-native-gpu-worker.yml"
+      - "app/static/assets/censorarr-icon.png"
+      - "VERSION"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: native-gpu-worker-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  windows:
+    name: Windows GPU Worker
+    runs-on: windows-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Read version
+        shell: pwsh
+        run: |
+          $appVersion = (Get-Content VERSION -Raw).Trim()
+          if (-not $appVersion) { throw "VERSION is empty" }
+          "CENSORARR_APP_VERSION=$appVersion" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          "CENSORARR_FILE_VERSION=$appVersion.0" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          "GPU_WORKER_WINDOWS_ASSET=Censorarr-GPU-Worker-Setup-$appVersion.exe" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
+      - name: Install build dependencies
+        shell: pwsh
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r gpu-worker/requirements.txt
+          python -m pip install pyinstaller pillow packaging
+          choco install innosetup -y --no-progress
+
+      - name: Resolve pinned NVIDIA runtime manifest
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force gpu-worker/native/windows/build | Out-Null
+          python gpu-worker/native/runtime_manifest.py `
+            --platform windows-amd64 `
+            --output gpu-worker/native/windows/build/runtime-manifest.json
+
+      - name: Create installer icon
+        shell: pwsh
+        run: |
+          @'
+          from PIL import Image
+          img = Image.open("app/static/assets/censorarr-icon.png").convert("RGBA")
+          img.save(
+              "gpu-worker/native/windows/build/censorarr-gpu-worker.ico",
+              format="ICO",
+              sizes=[(16,16),(24,24),(32,32),(48,48),(64,64),(128,128),(256,256)],
+          )
+          '@ | python -
+
+      - name: Download Visual C++ runtime
+        shell: pwsh
+        run: |
+          Invoke-WebRequest -UseBasicParsing `
+            "https://aka.ms/vs/17/release/vc_redist.x64.exe" `
+            -OutFile "gpu-worker/native/windows/build/vc_redist.x64.exe"
+
+      - name: Build native GPU Worker executable
+        shell: pwsh
+        run: |
+          pyinstaller `
+            --noconfirm `
+            --clean `
+            --onedir `
+            --name CensorarrGPUWorker `
+            --icon gpu-worker/native/windows/build/censorarr-gpu-worker.ico `
+            --paths gpu-worker/app `
+            --paths gpu-worker/native `
+            --distpath gpu-worker/native/windows/dist `
+            --workpath gpu-worker/native/windows/pyinstaller-build `
+            --collect-all faster_whisper `
+            --collect-all ctranslate2 `
+            --collect-all tokenizers `
+            --collect-all huggingface_hub `
+            --collect-all av `
+            --hidden-import uvicorn.logging `
+            --hidden-import uvicorn.loops.auto `
+            --hidden-import uvicorn.protocols.http.auto `
+            --hidden-import uvicorn.protocols.websockets.auto `
+            --hidden-import uvicorn.lifespan.on `
+            gpu-worker/native/gpu_worker_launcher.py
+
+      - name: Smoke test native worker without a GPU
+        shell: pwsh
+        run: |
+          Copy-Item `
+            "gpu-worker/native/windows/build/runtime-manifest.json" `
+            "gpu-worker/native/windows/dist/CensorarrGPUWorker/runtime-manifest.json" `
+            -Force
+          $env:CENSORARR_GPU_CONFIG = "$env:RUNNER_TEMP\gpu-worker.env"
+          $env:ASR_MODEL_DIR = "$env:RUNNER_TEMP\models"
+          $env:ASR_RUNTIME_DIR = "$env:RUNNER_TEMP\runtime"
+          $env:ASR_WORKER_TOKEN = "ci-test-token"
+          $env:CENSORARR_GPU_HOST = "127.0.0.1"
+          $env:CENSORARR_GPU_PORT = "9000"
+
+          & "gpu-worker/native/windows/dist/CensorarrGPUWorker/CensorarrGPUWorker.exe" --runtime-plan | Out-Null
+          if ($LASTEXITCODE -ne 0) { throw "Runtime manifest validation failed" }
+
+          $proc = Start-Process `
+            -FilePath "gpu-worker/native/windows/dist/CensorarrGPUWorker/CensorarrGPUWorker.exe" `
+            -ArgumentList "--background" `
+            -PassThru
+          $passed = $false
+          try {
+            for ($i = 0; $i -lt 45; $i++) {
+              Start-Sleep -Seconds 1
+              $proc.Refresh()
+              if ($proc.HasExited) { break }
+              try {
+                $health = Invoke-RestMethod `
+                  -Uri "http://127.0.0.1:9000/health" `
+                  -Headers @{"X-Censorarr-Token"="ci-test-token"} `
+                  -TimeoutSec 1
+                Write-Host "Worker API responded; version=$($health.version) cuda_devices=$($health.cuda_devices)"
+                $passed = $true
+                break
+              } catch {}
+            }
+          } finally {
+            Get-Process CensorarrGPUWorker -ErrorAction SilentlyContinue |
+              Stop-Process -Force -ErrorAction SilentlyContinue
+          }
+          if (-not $passed) { throw "Native GPU Worker API did not start" }
+
+      - name: Compile Windows GPU Worker installer
+        shell: pwsh
+        working-directory: gpu-worker/native/windows
+        run: |
+          New-Item -ItemType Directory -Force dist-installer | Out-Null
+          $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $iscc)) { throw "Inno Setup compiler not found" }
+          & $iscc "CensorarrGPUWorker.iss"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Smoke test installed Windows GPU Worker
+        shell: pwsh
+        run: |
+          $env:CENSORARR_GPU_SKIP_RUNTIME_INSTALL = "1"
+          $env:CENSORARR_GPU_SKIP_SERVICE_INSTALL = "1"
+          $setup = "gpu-worker/native/windows/dist-installer/$env:GPU_WORKER_WINDOWS_ASSET"
+          $install = Start-Process `
+            -FilePath $setup `
+            -ArgumentList "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART" `
+            -Wait -PassThru
+          if ($install.ExitCode -ne 0) { throw "GPU Worker installer failed: $($install.ExitCode)" }
+
+          $exe = Join-Path $env:ProgramFiles "Censorarr GPU Worker\CensorarrGPUWorker.exe"
+          if (-not (Test-Path $exe)) { throw "Installed GPU Worker executable not found" }
+
+          $config = "C:\ProgramData\CensorarrGPUWorker\worker.env"
+          if (-not (Test-Path $config)) { throw "GPU Worker config was not created" }
+          $tokenLine = Get-Content $config | Where-Object { $_ -like "ASR_WORKER_TOKEN=*" } | Select-Object -First 1
+          $token = $tokenLine.Substring("ASR_WORKER_TOKEN=".Length)
+
+          $env:CENSORARR_GPU_HOST = "127.0.0.1"
+          $proc = Start-Process -FilePath $exe -ArgumentList "--background" -PassThru
+          $passed = $false
+          try {
+            for ($i = 0; $i -lt 45; $i++) {
+              Start-Sleep -Seconds 1
+              $proc.Refresh()
+              if ($proc.HasExited) { break }
+              try {
+                $health = Invoke-RestMethod `
+                  -Uri "http://127.0.0.1:9000/health" `
+                  -Headers @{"X-Censorarr-Token"=$token} `
+                  -TimeoutSec 1
+                Write-Host "Installed worker responded; version=$($health.version) cuda_devices=$($health.cuda_devices)"
+                $passed = $true
+                break
+              } catch {}
+            }
+          } finally {
+            Get-Process CensorarrGPUWorker -ErrorAction SilentlyContinue |
+              Stop-Process -Force -ErrorAction SilentlyContinue
+          }
+          if (-not $passed) { throw "Installed GPU Worker API did not start" }
+
+      - name: Upload Windows GPU Worker artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Censorarr-GPU-Worker-Windows-${{ env.CENSORARR_APP_VERSION }}
+          path: gpu-worker/native/windows/dist-installer/${{ env.GPU_WORKER_WINDOWS_ASSET }}
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Publish Windows GPU Worker to GitHub Release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $tag = "v$env:CENSORARR_APP_VERSION"
+          $asset = "gpu-worker/native/windows/dist-installer/$env:GPU_WORKER_WINDOWS_ASSET"
+
+          gh release view $tag *> $null
+          if ($LASTEXITCODE -ne 0) {
+            gh release create $tag --target $env:GITHUB_SHA --title "Censorarr v$env:CENSORARR_APP_VERSION" --notes "Censorarr $env:CENSORARR_APP_VERSION"
+            if ($LASTEXITCODE -ne 0) {
+              gh release view $tag *> $null
+              if ($LASTEXITCODE -ne 0) { exit 1 }
+            }
+          }
+
+          $existing = @(gh release view $tag --json assets --jq '.assets[].name')
+          if ($existing -contains $env:GPU_WORKER_WINDOWS_ASSET) {
+            Write-Host "$env:GPU_WORKER_WINDOWS_ASSET is already published; leaving it unchanged."
+            exit 0
+          }
+          gh release upload $tag $asset
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+  linux:
+    name: Linux GPU Worker
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Read version
+        shell: bash
+        run: |
+          set -euo pipefail
+          app_version="$(tr -d '[:space:]' < VERSION)"
+          echo "CENSORARR_APP_VERSION=$app_version" >> "$GITHUB_ENV"
+          echo "GPU_WORKER_LINUX_ASSET=Censorarr-GPU-Worker-${app_version}-linux-amd64.deb" >> "$GITHUB_ENV"
+
+      - name: Install build dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y adduser ca-certificates libgomp1
+          python -m pip install --upgrade pip
+          python -m pip install -r gpu-worker/requirements.txt
+          python -m pip install pyinstaller packaging
+
+      - name: Resolve pinned NVIDIA runtime manifest
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p gpu-worker/native/linux/build
+          python gpu-worker/native/runtime_manifest.py \
+            --platform linux-amd64 \
+            --output gpu-worker/native/linux/build/runtime-manifest.json
+
+      - name: Build native GPU Worker executable
+        shell: bash
+        run: |
+          set -euo pipefail
+          pyinstaller \
+            --noconfirm \
+            --clean \
+            --onedir \
+            --name CensorarrGPUWorker \
+            --paths gpu-worker/app \
+            --paths gpu-worker/native \
+            --distpath gpu-worker/native/linux/dist \
+            --workpath gpu-worker/native/linux/pyinstaller-build \
+            --collect-all faster_whisper \
+            --collect-all ctranslate2 \
+            --collect-all tokenizers \
+            --collect-all huggingface_hub \
+            --collect-all av \
+            --hidden-import uvicorn.logging \
+            --hidden-import uvicorn.loops.auto \
+            --hidden-import uvicorn.protocols.http.auto \
+            --hidden-import uvicorn.protocols.websockets.auto \
+            --hidden-import uvicorn.lifespan.on \
+            gpu-worker/native/gpu_worker_launcher.py
+
+          cp gpu-worker/native/linux/build/runtime-manifest.json \
+             gpu-worker/native/linux/dist/CensorarrGPUWorker/runtime-manifest.json
+
+      - name: Smoke test native worker without a GPU
+        shell: bash
+        run: |
+          set -euo pipefail
+          export CENSORARR_GPU_CONFIG="$RUNNER_TEMP/gpu-worker.env"
+          export ASR_MODEL_DIR="$RUNNER_TEMP/models"
+          export ASR_RUNTIME_DIR="$RUNNER_TEMP/runtime"
+          export ASR_WORKER_TOKEN="ci-test-token"
+          export CENSORARR_GPU_HOST=127.0.0.1
+          export CENSORARR_GPU_PORT=9000
+
+          ./gpu-worker/native/linux/dist/CensorarrGPUWorker/CensorarrGPUWorker --runtime-plan >/dev/null
+
+          ./gpu-worker/native/linux/dist/CensorarrGPUWorker/CensorarrGPUWorker --background \
+            > "$RUNNER_TEMP/gpu-worker.log" 2>&1 &
+          pid=$!
+          trap 'kill "$pid" >/dev/null 2>&1 || true' EXIT
+
+          passed=0
+          for _ in $(seq 1 45); do
+            if curl -fsS -H "X-Censorarr-Token: ci-test-token" \
+              http://127.0.0.1:9000/health > "$RUNNER_TEMP/health.json"; then
+              cat "$RUNNER_TEMP/health.json"
+              passed=1
+              break
+            fi
+            if ! kill -0 "$pid" 2>/dev/null; then
+              break
+            fi
+            sleep 1
+          done
+          if [ "$passed" -ne 1 ]; then
+            cat "$RUNNER_TEMP/gpu-worker.log" || true
+            exit 1
+          fi
+
+      - name: Build Debian GPU Worker package
+        shell: bash
+        run: |
+          set -euo pipefail
+          pkg="$GITHUB_WORKSPACE/gpu-worker/native/linux/package-root"
+          out="$GITHUB_WORKSPACE/gpu-worker/native/linux/dist-package"
+          rm -rf "$pkg" "$out"
+          mkdir -p \
+            "$pkg/DEBIAN" \
+            "$pkg/opt/censorarr-gpu-worker" \
+            "$pkg/usr/bin" \
+            "$pkg/lib/systemd/system" \
+            "$pkg/var/lib/censorarr-gpu-worker/models" \
+            "$pkg/var/lib/censorarr-gpu-worker/runtime" \
+            "$pkg/var/lib/censorarr-gpu-worker/logs" \
+            "$out"
+
+          cp -a gpu-worker/native/linux/dist/CensorarrGPUWorker/. "$pkg/opt/censorarr-gpu-worker/"
+          cp gpu-worker/native/linux/CensorarrGPUWorker.service \
+             "$pkg/lib/systemd/system/censorarr-gpu-worker.service"
+          cp gpu-worker/native/linux/postinst "$pkg/DEBIAN/postinst"
+          cp gpu-worker/native/linux/prerm "$pkg/DEBIAN/prerm"
+          cp gpu-worker/native/linux/postrm "$pkg/DEBIAN/postrm"
+          chmod 0755 "$pkg/DEBIAN/postinst" "$pkg/DEBIAN/prerm" "$pkg/DEBIAN/postrm"
+          ln -s /opt/censorarr-gpu-worker/CensorarrGPUWorker "$pkg/usr/bin/censorarr-gpu-worker"
+
+          cat > "$pkg/DEBIAN/control" <<EOF
+          Package: censorarr-gpu-worker
+          Version: $CENSORARR_APP_VERSION
+          Section: utils
+          Priority: optional
+          Architecture: amd64
+          Maintainer: Censorarr Project <75155257+leestow@users.noreply.github.com>
+          Depends: adduser, ca-certificates, libgomp1
+          Homepage: https://github.com/leestow/Censorarr
+          Description: Native NVIDIA GPU transcription worker for Censorarr
+           Remote Faster-Whisper service used by Censorarr for CUDA transcription.
+          EOF
+          sed -i 's/^          //' "$pkg/DEBIAN/control"
+
+          dpkg-deb --build --root-owner-group "$pkg" "$out/$GPU_WORKER_LINUX_ASSET"
+          dpkg-deb --info "$out/$GPU_WORKER_LINUX_ASSET"
+
+      - name: Install and smoke test Debian GPU Worker package
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo env CENSORARR_GPU_SKIP_RUNTIME_INSTALL=1 \
+            apt-get install -y "./gpu-worker/native/linux/dist-package/$GPU_WORKER_LINUX_ASSET"
+
+          test -x /opt/censorarr-gpu-worker/CensorarrGPUWorker
+          test -L /usr/bin/censorarr-gpu-worker
+          test -f /lib/systemd/system/censorarr-gpu-worker.service
+          test -f /etc/censorarr-gpu-worker.env
+
+          sudo systemctl stop censorarr-gpu-worker.service >/dev/null 2>&1 || true
+          sudo pkill -f "/opt/censorarr-gpu-worker/CensorarrGPUWorker" >/dev/null 2>&1 || true
+
+          token="$(sudo /opt/censorarr-gpu-worker/CensorarrGPUWorker --show-token)"
+          sudo -u censorarr-gpu-worker env \
+            CENSORARR_GPU_HOST=127.0.0.1 \
+            /opt/censorarr-gpu-worker/CensorarrGPUWorker --background \
+            > "$RUNNER_TEMP/installed-gpu-worker.log" 2>&1 &
+          pid=$!
+          trap 'sudo kill "$pid" >/dev/null 2>&1 || true; sudo pkill -f "/opt/censorarr-gpu-worker/CensorarrGPUWorker" >/dev/null 2>&1 || true' EXIT
+
+          passed=0
+          for _ in $(seq 1 45); do
+            if curl -fsS -H "X-Censorarr-Token: $token" \
+              http://127.0.0.1:9000/health > "$RUNNER_TEMP/installed-health.json"; then
+              cat "$RUNNER_TEMP/installed-health.json"
+              passed=1
+              break
+            fi
+            sleep 1
+          done
+          if [ "$passed" -ne 1 ]; then
+            cat "$RUNNER_TEMP/installed-gpu-worker.log" || true
+            exit 1
+          fi
+
+      - name: Upload Linux GPU Worker artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Censorarr-GPU-Worker-Linux-${{ env.CENSORARR_APP_VERSION }}
+          path: gpu-worker/native/linux/dist-package/${{ env.GPU_WORKER_LINUX_ASSET }}
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Publish Linux GPU Worker to GitHub Release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          tag="v$CENSORARR_APP_VERSION"
+          asset="gpu-worker/native/linux/dist-package/$GPU_WORKER_LINUX_ASSET"
+
+          if ! gh release view "$tag" >/dev/null 2>&1; then
+            if ! gh release create "$tag" --target "$GITHUB_SHA" \
+              --title "Censorarr v$CENSORARR_APP_VERSION" \
+              --notes "Censorarr $CENSORARR_APP_VERSION"; then
+              gh release view "$tag" >/dev/null
+            fi
+          fi
+
+          if gh release view "$tag" --json assets --jq '.assets[].name' |
+             grep -Fxq "$GPU_WORKER_LINUX_ASSET"; then
+            echo "$GPU_WORKER_LINUX_ASSET is already published; leaving it unchanged."
+            exit 0
+          fi
+          gh release upload "$tag" "$asset"

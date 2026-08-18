@@ -1,0 +1,62 @@
+#!/bin/sh
+set -e
+
+if ! getent group censorarr-gpu-worker >/dev/null 2>&1; then
+    addgroup --system censorarr-gpu-worker >/dev/null
+fi
+
+if ! id censorarr-gpu-worker >/dev/null 2>&1; then
+    adduser \
+        --system \
+        --ingroup censorarr-gpu-worker \
+        --home /var/lib/censorarr-gpu-worker \
+        --no-create-home \
+        --shell /usr/sbin/nologin \
+        censorarr-gpu-worker >/dev/null
+fi
+
+install -d -m 0750 -o censorarr-gpu-worker -g censorarr-gpu-worker \
+    /var/lib/censorarr-gpu-worker \
+    /var/lib/censorarr-gpu-worker/models \
+    /var/lib/censorarr-gpu-worker/runtime \
+    /var/lib/censorarr-gpu-worker/logs
+
+CENSORARR_GPU_CONFIG=/etc/censorarr-gpu-worker.env \
+ASR_RUNTIME_DIR=/var/lib/censorarr-gpu-worker/runtime \
+ASR_MODEL_DIR=/var/lib/censorarr-gpu-worker/models \
+    /opt/censorarr-gpu-worker/CensorarrGPUWorker --ensure-config >/dev/null
+
+chown root:censorarr-gpu-worker /etc/censorarr-gpu-worker.env
+chmod 0640 /etc/censorarr-gpu-worker.env
+
+if [ "${CENSORARR_GPU_SKIP_RUNTIME_INSTALL:-0}" = "1" ]; then
+    echo "Censorarr GPU Worker: CI/runtime download skip requested."
+elif command -v nvidia-smi >/dev/null 2>&1 && nvidia-smi -L >/dev/null 2>&1; then
+    echo "Censorarr GPU Worker: NVIDIA driver detected; downloading pinned CUDA runtime libraries."
+    if ! CENSORARR_GPU_CONFIG=/etc/censorarr-gpu-worker.env \
+         ASR_RUNTIME_DIR=/var/lib/censorarr-gpu-worker/runtime \
+         ASR_MODEL_DIR=/var/lib/censorarr-gpu-worker/models \
+         /opt/censorarr-gpu-worker/CensorarrGPUWorker --install-runtime; then
+        echo "WARNING: NVIDIA runtime download failed."
+        echo "Retry later with: sudo /opt/censorarr-gpu-worker/CensorarrGPUWorker --install-runtime"
+    fi
+else
+    echo "WARNING: No working NVIDIA driver was detected."
+    echo "Install the NVIDIA driver, then run:"
+    echo "  sudo /opt/censorarr-gpu-worker/CensorarrGPUWorker --install-runtime"
+fi
+
+chown -R censorarr-gpu-worker:censorarr-gpu-worker /var/lib/censorarr-gpu-worker
+
+if command -v systemctl >/dev/null 2>&1 && [ -d /run/systemd/system ]; then
+    systemctl daemon-reload || true
+    systemctl enable censorarr-gpu-worker.service >/dev/null 2>&1 || true
+    systemctl restart censorarr-gpu-worker.service || true
+fi
+
+echo
+echo "Censorarr GPU Worker configuration: /etc/censorarr-gpu-worker.env"
+echo "Show the generated token with:"
+echo "  sudo /opt/censorarr-gpu-worker/CensorarrGPUWorker --show-token"
+echo "Worker URL: http://THIS-HOST:9000"
+exit 0

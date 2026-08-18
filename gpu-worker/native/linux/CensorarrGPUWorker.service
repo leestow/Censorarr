@@ -1,0 +1,24 @@
+[Unit]
+Description=Censorarr GPU Worker
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=censorarr-gpu-worker
+Group=censorarr-gpu-worker
+EnvironmentFile=-/etc/censorarr-gpu-worker.env
+Environment=CENSORARR_GPU_CONFIG=/etc/censorarr-gpu-worker.env
+Environment=ASR_RUNTIME_DIR=/var/lib/censorarr-gpu-worker/runtime
+WorkingDirectory=/var/lib/censorarr-gpu-worker
+ExecStart=/opt/censorarr-gpu-worker/CensorarrGPUWorker --background
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=full
+ReadWritePaths=/var/lib/censorarr-gpu-worker
+
+[Install]
+WantedBy=multi-user.target
