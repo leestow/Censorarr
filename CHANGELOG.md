@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.6.7
+
+- Fixed the **Process** button on TV episode detail pages when Sonarr reports a host/NAS path that differs from Censorarr's mounted `/tv` path.
+- Manual processing now retries the requested path through every configured Sonarr, Radarr, Plex, and Bazarr path mapping before rejecting it.
+- Processing remains restricted to the configured Censorarr Movies/TV roots after mapping, preserving the existing filesystem security boundary.
+- Process/Reprocess failures from media detail pages now display the API error instead of appearing to do nothing.
+- Aligned the main app, processing engine, integrations layer, and GPU worker version reporting to `1.6.7`.
+
 ## 1.6.6
 
 - Fixed processed media retaining restrictive source permissions such as `0700`/`0600`, which could make a movie disappear from Plex after Censorarr replaced the original file.
