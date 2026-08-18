@@ -18,7 +18,7 @@ from fastapi.responses import HTMLResponse, Response
 import updater
 import webapp_core as core
 
-VERSION = "1.6.7"
+VERSION = "1.6.8"
 core.VERSION = VERSION
 core.pc.VERSION = VERSION
 core.pc.DEFAULT_CONFIG.setdefault("safety", {})["ensure_readable_output"] = True
@@ -37,7 +37,6 @@ def _preserve_processed_media_metadata(src_stat, temp_out: Path, cfg: dict) -> N
     if not preserve_owner_mode and not ensure_readable_output:
         return
 
-    # Preserve ownership first because POSIX chown can clear special permission bits.
     if preserve_owner_mode:
         try:
             os.chown(temp_out, src_stat.st_uid, src_stat.st_gid)
@@ -53,8 +52,6 @@ def _preserve_processed_media_metadata(src_stat, temp_out: Path, cfg: dict) -> N
             core.pc.logging.warning("Could not read output permissions for %s: %s", temp_out, exc)
             return
 
-    # Preserve any broader source permissions, but never allow a processed media file
-    # to become owner-only (0600/0700). Plex and other media services need read access.
     if ensure_readable_output:
         target_mode |= 0o444
 
@@ -67,10 +64,6 @@ def _preserve_processed_media_metadata(src_stat, temp_out: Path, cfg: dict) -> N
 core.pc.preserve_metadata = _preserve_processed_media_metadata
 
 
-# Docker/Synology runs the web server and media worker in separate Python processes.
-# The child must start through censorarr_worker.py so the same metadata safety patch is
-# installed inside the process that actually remuxes/replaces media files. Native
-# launchers have their own worker bootstrap and are intentionally left alone here.
 def _docker_worker_start(self) -> None:
     with self.lock:
         if self.proc and self.proc.poll() is None:
@@ -91,7 +84,6 @@ if os.name != "nt" and str(os.environ.get("CENSORARR_PLATFORM", "")).lower() != 
     core.WorkerSupervisor.start = _docker_worker_start
 
 
-# Re-export the ASGI application expected by existing Docker/Windows launchers.
 app = core.app
 
 
@@ -116,12 +108,6 @@ def _configured_media_roots() -> list[Path]:
 
 
 def _allowed_media_mounts() -> list[Path]:
-    """Security boundary for manual media browsing/processing.
-
-    Native Windows uses configured drive/UNC roots. Docker/Synology additionally
-    exposes the conventional /media and /tv mounts so first-run installs work before
-    the settings file has been finalized.
-    """
     roots = _configured_media_roots()
     if os.name != "nt":
         for raw in ("/media", "/tv"):
@@ -139,13 +125,6 @@ def _allowed_media_mounts() -> list[Path]:
 
 
 def _configured_path_mappings(cfg: dict) -> list[dict]:
-    """Return every configured external->local media path mapping.
-
-    Media-detail pages may receive paths from Sonarr/Radarr/Plex/Bazarr while the
-    process endpoint must operate on the local mounted path. Accepting all known
-    mappings makes the Process button resilient to whichever integration supplied
-    the media row.
-    """
     out: list[dict] = []
 
     def add(rows) -> None:
@@ -230,8 +209,6 @@ def safe_media_path(raw: str, must_exist: bool = True) -> Path:
     )
 
 
-# Existing routes in webapp_core resolve these names from that module at request time.
-# Replacing them here makes manual browsing/processing work with native Windows paths too.
 core._allowed_media_mounts = _allowed_media_mounts
 core.safe_media_path = safe_media_path
 
@@ -256,7 +233,6 @@ def _folder_picker_path(raw: str) -> Path:
     if not resolved.is_dir():
         raise HTTPException(400, "Not a directory")
     if os.name == "nt":
-        # Native Windows may select any locally reachable drive, mapped drive, or UNC path.
         return resolved
     roots = _folder_picker_roots()
     if not any(resolved == root or root in resolved.parents for root in roots):
@@ -268,8 +244,6 @@ def _folder_picker_path(raw: str) -> Path:
 def browse_folders(path: str = Query(""), _: bool = Depends(core.auth)):
     roots = _folder_picker_roots()
     root_strings = [str(x) for x in roots]
-
-    # Windows starts with a virtual This PC view so drive letters can be selected.
     if os.name == "nt" and not str(path).strip():
         return {
             "path": "",
@@ -409,7 +383,6 @@ def updater_script(_: bool = Depends(core.auth)):
     return Response(js.read_text(encoding="utf-8"), media_type="application/javascript")
 
 
-# Replace only the root page route. All API/static routes remain the original application.
 for route in list(app.router.routes):
     if getattr(route, "path", None) == "/" and "GET" in (getattr(route, "methods", set()) or set()):
         app.router.routes.remove(route)
@@ -440,7 +413,6 @@ window.reprocess = async function(path) {
 
 
 def _automatic_update_loop() -> None:
-    # Give normal startup/media preflight time to settle before the first background check.
     time.sleep(45)
     while True:
         try:
