@@ -11,7 +11,7 @@ from pathlib import Path
 
 import censorarr as pc
 
-VERSION = "1.6.7"
+VERSION = "1.6.8"
 pc.VERSION = VERSION
 pc.DEFAULT_CONFIG.setdefault("safety", {})["ensure_readable_output"] = True
 
@@ -68,12 +68,7 @@ def after_success_with_plex_analyze(
     rating: str | None,
     report: str | None,
 ) -> None:
-    """Run normal completion actions, then ask Plex to re-analyze changed media.
-
-    A metadata refresh alone can leave Plex's cached audio-stream list stale when
-    Censorarr replaces a file in place. A targeted Analyze forces Plex to read the
-    media properties again so newly-added CLEAN audio streams appear in the player.
-    """
+    """Run normal completion actions, then ask Plex to re-analyze changed media."""
     _original_after_success(path, cfg, status, rating, report)
 
     plex_cfg = cfg.get("plex_activity", {}) or {}
