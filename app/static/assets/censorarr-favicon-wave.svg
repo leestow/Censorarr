@@ -1,12 +1,19 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Censorarr">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" role="img" aria-label="Censorarr">
   <defs>
-    <linearGradient id="ring" x1="8" y1="8" x2="56" y2="56" gradientUnits="userSpaceOnUse">
-      <stop offset="0" stop-color="#25d8ff"/>
-      <stop offset="1" stop-color="#2388ff"/>
+    <linearGradient id="ring" x1="4" y1="4" x2="44" y2="44" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#24d8ff"/>
+      <stop offset="1" stop-color="#227bd9"/>
+    </linearGradient>
+    <linearGradient id="wave" x1="9" y1="24" x2="39" y2="24" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#2ec9ff"/>
+      <stop offset="0.55" stop-color="#36e1ff"/>
+      <stop offset="1" stop-color="#22b8ea"/>
     </linearGradient>
   </defs>
-  <circle cx="32" cy="32" r="28" fill="#071724" stroke="url(#ring)" stroke-width="3"/>
-  <g stroke="#3fdbff" stroke-width="3.2" stroke-linecap="round">
-    <path d="M16 30v4"/><path d="M22 24v16"/><path d="M28 18v28"/><path d="M34 22v20"/><path d="M40 15v34"/><path d="M46 24v16"/><path d="M52 29v6"/>
-  </g>
+  <circle cx="24" cy="24" r="20.5" fill="#0b1520" stroke="url(#ring)" stroke-width="2.4"/>
+  <rect x="9.5" y="21.5" width="6" height="5" rx="2.5" fill="url(#wave)"/>
+  <rect x="16" y="14.5" width="5.2" height="19" rx="2.6" fill="url(#wave)"/>
+  <rect x="21.9" y="8.5" width="5.8" height="31" rx="2.9" fill="url(#wave)"/>
+  <rect x="28.3" y="15" width="5.2" height="18" rx="2.6" fill="url(#wave)"/>
+  <rect x="34" y="21.5" width="5.5" height="5" rx="2.5" fill="url(#wave)"/>
 </svg>
