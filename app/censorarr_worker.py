@@ -9,6 +9,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
+import automation_audio_source_finalize
 import automation_audio_sources
 import censorarr as pc
 import dialogue_enhancement
@@ -118,10 +119,13 @@ pc.after_success = after_success_with_plex_analyze
 # Independent master switches and per-feature completion markers are installed first.
 family_features.install(pc, dialogue_enhancement)
 
-# Automation source selection is installed last so it can safely wrap the feature-aware
-# process and marker hooks above. Manual per-movie source overrides can plug into this
-# layer later without changing the library-wide defaults.
+# Automation source selection is installed after feature tracking so it can wrap the
+# feature-aware process and marker hooks.
 automation_audio_sources.install(pc, dialogue_enhancement)
+
+# CLEAN-only/Skip is a terminal per-feature decision for the current source/settings
+# signature; this last guard makes that durable even when no media remux was needed.
+automation_audio_source_finalize.install(pc, automation_audio_sources)
 
 
 if __name__ == "__main__":
