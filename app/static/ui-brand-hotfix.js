@@ -19,7 +19,27 @@
     }
   }
 
-  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', applyBrand, {once:true});
-  else applyBrand();
-  setTimeout(applyBrand, 800);
+  function applySidebarAlignment() {
+    if (document.getElementById('censorarrSidebarAlignmentFix')) return;
+    const style = document.createElement('style');
+    style.id = 'censorarrSidebarAlignmentFix';
+    style.textContent = `
+      /* Collapsible headers must use the exact same icon/text geometry as normal nav rows. */
+      .side-nav .fs-nav-group > .nav-group-btn {
+        grid-template-columns: 28px 1fr auto !important;
+        gap: 8px !important;
+        padding: 10px 17px !important;
+      }
+    `;
+    document.head.appendChild(style);
+  }
+
+  function apply() {
+    applyBrand();
+    applySidebarAlignment();
+  }
+
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', apply, {once:true});
+  else apply();
+  setTimeout(apply, 800);
 })();
