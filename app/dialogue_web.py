@@ -10,6 +10,7 @@ import urllib.request
 from fastapi import Depends, HTTPException, Query, Request
 from fastapi.responses import Response
 
+import fast_metadata_cache
 from dialogue_enhancement import DEFAULTS
 
 DEV_VERSION = "1.6.8-dev"
@@ -59,6 +60,11 @@ def install(app, core) -> None:
     # file (which remains the stable release version and drives normal release workflows).
     core.VERSION = DEV_VERSION
     core.pc.VERSION = DEV_VERSION
+
+    # Persist the last good Movies/TV catalog in /config. After the first successful
+    # metadata load, cold browser loads and container restarts can paint immediately
+    # while Radarr/Sonarr/Bazarr refresh in the background.
+    fast_metadata_cache.install(app, core)
 
     # A development checkout must never let the stable self-updater replace /app with
     # a release tarball. Keep update checking/release links available, but make the
