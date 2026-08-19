@@ -79,7 +79,7 @@ If a folder works in File Explorer but not in Censorarr:
 
 1. Confirm Censorarr is running under the same signed-in Windows account.
 2. Try a UNC path such as `\\SERVER\Share\Movies` if a mapped drive is not visible.
-3. Confirm the account has read permission, plus write permission when Apply mode will modify media.
+3. Confirm the account has read and write permission to the media location.
 4. Restart Censorarr after changing credentials or drive mappings.
 
 See [Windows Installation](Windows-Installation.md).
