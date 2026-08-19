@@ -12,7 +12,7 @@ The fastest Windows path is the native installer:
 4. Leave **Open Censorarr** checked when Setup finishes.
 5. Complete the Setup Wizard at `http://127.0.0.1:8087`.
 6. Use **Browse...** to select your Movies and TV folders.
-7. Start with **Dry Run** enabled.
+7. Start with a small test folder or a small media set.
 
 Latest Windows installer:
 
@@ -137,7 +137,6 @@ Recommended first-pass choices:
 
 - Movies folder: `/media`
 - TV folder: `/tv` if used
-- Dry Run: **On**
 - Transcription: local CPU
 - Plex: Skip
 - Radarr/Sonarr: Skip
@@ -161,9 +160,7 @@ You should see the media preflight pass before Whisper loads.
 
 ### 6. Test a small media set
 
-Dry Run still needs to **read** the source media, but it does not perform the final media replacement.
-
-Once detection looks correct, enable Apply mode.
+Use a small test folder or a handful of media files first. Confirm Censorarr can read, transcribe, create the CLEAN track, validate the output, and leave the media playable before expanding to the full library.
 
 ### 7. Optional: add the GPU Worker
 
