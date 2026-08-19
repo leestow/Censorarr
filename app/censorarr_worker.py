@@ -9,6 +9,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
+import automation_audio_sources
 import censorarr as pc
 import dialogue_enhancement
 import family_features
@@ -114,9 +115,13 @@ def after_success_with_plex_analyze(
 
 pc.after_success = after_success_with_plex_analyze
 
-# Independent master switches for Profanity Censoring and Dialogue Enhancement.
-# This is installed last so dialogue-only processing sees all safety/Plex hooks above.
+# Independent master switches and per-feature completion markers are installed first.
 family_features.install(pc, dialogue_enhancement)
+
+# Automation source selection is installed last so it can safely wrap the feature-aware
+# process and marker hooks above. Manual per-movie source overrides can plug into this
+# layer later without changing the library-wide defaults.
+automation_audio_sources.install(pc, dialogue_enhancement)
 
 
 if __name__ == "__main__":
