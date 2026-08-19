@@ -44,9 +44,6 @@ def _marker_entry(core, media: Path, cfg: dict) -> tuple[dict, dict]:
 
 def _known_generated(core, media: Path, cfg: dict) -> dict[str, str]:
     _data, entry = _marker_entry(core, media, cfg)
-    # Safety boundary: never let a stale marker unlock a similarly named track in a
-    # replacement file. If the marker does not describe this exact current file, every
-    # audio stream remains protected.
     try:
         if not entry or str(entry.get("fingerprint") or "") != str(core.pc.fingerprint(media)):
             return {}
@@ -66,16 +63,18 @@ def _known_generated(core, media: Path, cfg: dict) -> dict[str, str]:
 
     top_status = str(entry.get("status") or "").lower()
     if top_status == "applied":
+        prec = features.get(FEATURE_PROFANITY)
         clean_title = str((cfg.get("clean_track", {}) or {}).get("title", "English - CLEAN")).strip()
-        if clean_title:
+        if clean_title and not (isinstance(prec, dict) and prec.get("suppressed")):
             known.setdefault(clean_title.lower(), FEATURE_PROFANITY)
         drec = features.get(FEATURE_DIALOGUE)
         dialogue_title = str((cfg.get("dialogue_enhancement", {}) or {}).get("title", "English - DIALOGUE ENHANCED")).strip()
-        if dialogue_title and isinstance(drec, dict) and str(drec.get("status") or "").lower() == "applied":
+        if dialogue_title and isinstance(drec, dict) and str(drec.get("status") or "").lower() == "applied" and not drec.get("suppressed"):
             known.setdefault(dialogue_title.lower(), FEATURE_DIALOGUE)
     if top_status == "dialogue-applied":
+        drec = features.get(FEATURE_DIALOGUE)
         title = str((cfg.get("dialogue_enhancement", {}) or {}).get("title", "English - DIALOGUE ENHANCED")).strip()
-        if title:
+        if title and not (isinstance(drec, dict) and drec.get("suppressed")):
             known.setdefault(title.lower(), FEATURE_DIALOGUE)
     return known
 
@@ -83,10 +82,19 @@ def _known_generated(core, media: Path, cfg: dict) -> dict[str, str]:
 def _track_rows(core, media: Path, cfg: dict, probe: dict | None = None) -> list[dict]:
     probe = probe or core.pc.ffprobe(media)
     generated = _known_generated(core, media, cfg)
+    audio_rows = _audio(probe)
+    title_counts: dict[str, int] = {}
+    for stream, _rel in audio_rows:
+        title = _stream_title(stream).lower()
+        if title:
+            title_counts[title] = title_counts.get(title, 0) + 1
+
     rows = []
-    for stream, rel in _audio(probe):
+    for stream, rel in audio_rows:
         title = _stream_title(stream)
-        feature = generated.get(title.lower()) if title else None
+        key = title.lower() if title else ""
+        # Never guess between duplicate titles. Ambiguous streams are all protected.
+        feature = generated.get(key) if key and title_counts.get(key, 0) == 1 else None
         tags = stream.get("tags") or {}
         rows.append({
             "stream_index": int(stream.get("index", -1)),
