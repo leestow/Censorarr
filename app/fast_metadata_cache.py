@@ -120,6 +120,55 @@ def install(app, core) -> None:
         except Exception as exc:
             raise HTTPException(502, f"Could not load {kind} metadata: {exc}")
 
+    @app.get("/api/media-detail-fast")
+    def media_detail_fast(
+        kind: str = Query(..., pattern="^(movie|series)$"),
+        id: int = Query(..., ge=0),
+        _: bool = Depends(core.auth),
+    ):
+        """Return the already-cached movie card as a detail payload without ffprobe.
+
+        Movie details previously waited for /api/media-detail, which asks Radarr again and
+        probes the large media file before the page can paint. The Audio Tracks manager has
+        its own protected stream-inspection endpoint, so probing here is duplicate work.
+        Use the known-good Movies catalog for the fast first-class detail payload and let
+        audio-track inspection happen independently after the page is visible.
+        """
+        if kind != "movie":
+            # TV details need episode rows, which are not represented by the series catalog.
+            return core.media_detail(kind=kind, id=id, _=True)
+
+        cached = read_cache("movies")
+        data = cached["data"] if cached else None
+        if cached and cached["age"] >= CACHE_TTL_SECONDS:
+            refresh_background("movies")
+
+        if not valid_catalog(data):
+            try:
+                data = core.media_catalog(kind="movies", force=False, _=True)
+                if valid_catalog(data):
+                    write_cache("movies", data)
+            except Exception as exc:
+                raise HTTPException(502, f"Could not load cached movie details: {exc}")
+
+        item = next((x for x in (data.get("items") or []) if int(x.get("id", -1)) == int(id)), None) if isinstance(data, dict) else None
+        if not item:
+            raise HTTPException(404, "Movie not found in the cached Movies catalog")
+
+        detail = dict(item)
+        detail.update({
+            "kind": "movie",
+            "id": int(id),
+            "source": detail.get("source") or data.get("source") or "catalog-cache",
+            "runtime": detail.get("runtime"),
+            "genres": detail.get("genres") if isinstance(detail.get("genres"), list) else [],
+            "report": detail.get("report"),
+            "tracks": {"audio": [], "subtitles": []},
+            "tracks_deferred": True,
+            "metadata_cached": True,
+        })
+        return detail
+
     core.fast_metadata_cache_status = lambda: {
         kind: ({"cached": True, "age_seconds": round(read_cache(kind)["age"], 1)} if read_cache(kind) else {"cached": False})
         for kind in ("movies", "series")
