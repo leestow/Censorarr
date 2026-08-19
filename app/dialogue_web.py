@@ -11,6 +11,7 @@ from fastapi import Depends, HTTPException, Query, Request
 from fastapi.responses import Response
 
 import ai_dialogue
+import audio_track_management
 import automation_audio_sources
 import fast_metadata_cache
 from dialogue_enhancement import DEFAULTS
@@ -72,6 +73,7 @@ def install(app, core) -> None:
     core.pc.VERSION = DEV_VERSION
 
     fast_metadata_cache.install(app, core)
+    audio_track_management.install(app, core)
 
     import updater
     updater._platform = lambda: "development"
@@ -312,6 +314,9 @@ def install(app, core) -> None:
         source_rules = core.STATIC / "ui-audio-source-rules.js"
         if source_rules.is_file():
             content += "\n\n/* Automation audio-source rules */\n" + source_rules.read_text(encoding="utf-8")
+        track_manager = core.STATIC / "ui-audio-track-management.js"
+        if track_manager.is_file():
+            content += "\n\n/* Protected per-media audio-track management */\n" + track_manager.read_text(encoding="utf-8")
         persistent_cache = core.STATIC / "ui-persistent-metadata-cache.js"
         if persistent_cache.is_file():
             content += "\n\n/* Persistent stale-while-revalidate media metadata cache */\n" + persistent_cache.read_text(encoding="utf-8")
