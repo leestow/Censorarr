@@ -5,33 +5,172 @@
   function addStyles(){
     if(q('#fsUsabilityStyles'))return;
     const s=document.createElement('style');s.id='fsUsabilityStyles';s.textContent=`
-      /* Light mode should actually make the CONTENT cards light while leaving the
-         teal top bar and blue sidebar unchanged. */
+      /* Daylight mode owns only the main content area. The sidebar and top bar intentionally
+         stay dark/teal. These rules are deliberately broad so legacy and newly-added pages
+         cannot leave random dark islands behind. */
+      .wrap.fs-content-light{
+        --bg:#f3f7fb!important;--panel:#ffffff!important;--panel2:#f6f9fc!important;
+        --panel3:#eaf1f7!important;--text:#142435!important;--muted:#647b8e!important;
+        --line:#d6e2eb!important;--accent:#15966a!important;--accent2:#337eea!important;
+        --warn:#9a6500!important;--bad:#c83f46!important;
+        background:#f3f7fb!important;color:#142435!important;
+      }
+
+      .wrap.fs-content-light .card,
+      .wrap.fs-content-light .panel,
+      .wrap.fs-content-light .section,
+      .wrap.fs-content-light .table-wrap,
+      .wrap.fs-content-light .page-actions,
+      .wrap.fs-content-light .media-card,
+      .wrap.fs-content-light .season-card,
+      .wrap.fs-content-light .mini-info,
+      .wrap.fs-content-light .settings-head,
+      .wrap.fs-content-light .settings-header,
+      .wrap.fs-content-light .setting-callout,
+      .wrap.fs-content-light .integration-card,
+      .wrap.fs-content-light .fs-kpi,
+      .wrap.fs-content-light .fs-media-panel,
+      .wrap.fs-content-light .fs-side-card,
+      .wrap.fs-content-light .fs-tipbar,
+      .wrap.fs-content-light .fs-int,
+      .wrap.fs-content-light .fs-ops-panel,
+      .wrap.fs-content-light .fs-help-nav,
+      .wrap.fs-content-light .fs-help-article,
+      .wrap.fs-content-light .fs-integrations-overview-card,
+      .wrap.fs-content-light .browser,
+      .wrap.fs-content-light .review-list,
+      .wrap.fs-content-light .warning,
+      .wrap.fs-content-light .integration-notice,
+      .wrap.fs-content-light details{
+        background:#fff!important;color:#142435!important;border-color:#d5e1ea!important;
+        box-shadow:none!important;
+      }
+
+      .wrap.fs-content-light .panel h2,
+      .wrap.fs-content-light .panel h3,
+      .wrap.fs-content-light .section h2,
+      .wrap.fs-content-light .section h3,
+      .wrap.fs-content-light .settings-page-title,
+      .wrap.fs-content-light .settings-head h2,
+      .wrap.fs-content-light .settings-header h2,
+      .wrap.fs-content-light .fs-side-title h2,
+      .wrap.fs-content-light .fs-section-head h2,
+      .wrap.fs-content-light .fs-ops-panel h2,
+      .wrap.fs-content-light .fs-help-article h1,
+      .wrap.fs-content-light .fs-help-article h2,
+      .wrap.fs-content-light .fs-help-article h3,
+      .wrap.fs-content-light .media-title,
+      .wrap.fs-content-light .episode-title,
+      .wrap.fs-content-light .current,
+      .wrap.fs-content-light .fs-ops-current{
+        color:#142435!important;
+      }
+
+      .wrap.fs-content-light .muted,
+      .wrap.fs-content-light .sub,
+      .wrap.fs-content-light .footer-note,
+      .wrap.fs-content-light .settings-page-desc,
+      .wrap.fs-content-light .field label,
+      .wrap.fs-content-light .media-year,
+      .wrap.fs-content-light .media-sub,
+      .wrap.fs-content-light .fs-card-sub,
+      .wrap.fs-content-light .fs-kpi-label,
+      .wrap.fs-content-light .fs-history th,
+      .wrap.fs-content-light .fs-ops-meta,
+      .wrap.fs-content-light .fs-integrations-overview-desc,
+      .wrap.fs-content-light .fs-integrations-overview-state,
+      .wrap.fs-content-light .fs-help-topic small{
+        color:#647b8e!important;
+      }
+
+      .wrap.fs-content-light input,
+      .wrap.fs-content-light select,
+      .wrap.fs-content-light textarea{
+        background:#f7fafc!important;color:#142435!important;border-color:#c8d8e3!important;
+      }
+      .wrap.fs-content-light input::placeholder,
+      .wrap.fs-content-light textarea::placeholder{color:#8295a5!important}
+      .wrap.fs-content-light input:focus,
+      .wrap.fs-content-light select:focus,
+      .wrap.fs-content-light textarea:focus{
+        border-color:#40a7c7!important;box-shadow:0 0 0 2px rgba(38,153,187,.12)!important;
+      }
+
+      .wrap.fs-content-light button:not(.primary):not(.good):not(.danger):not(.fs-topbtn),
+      .wrap.fs-content-light .fs-ops-segment button{
+        background:#eef4f8!important;color:#21384a!important;border-color:#cbd9e3!important;
+      }
+      .wrap.fs-content-light button:hover:not(.fs-topbtn){background:#e5eef4!important}
+      .wrap.fs-content-light .fs-ops-segment button.active,
+      .wrap.fs-content-light .segmented button.active{
+        background:#dcecff!important;color:#1f5da8!important;border-color:#b9d2ed!important;
+      }
+
+      .wrap.fs-content-light table,
+      .wrap.fs-content-light .fs-history{color:#142435!important}
+      .wrap.fs-content-light th,
+      .wrap.fs-content-light .det.head{
+        background:#f1f6fa!important;color:#62798c!important;border-color:#dce6ed!important;
+      }
+      .wrap.fs-content-light td,
+      .wrap.fs-content-light .det,
+      .wrap.fs-content-light .entry,
+      .wrap.fs-content-light .fs-stat,
+      .wrap.fs-content-light .fs-ops-stat,
+      .wrap.fs-content-light .fs-ops-queue-row{
+        color:#142435!important;border-color:#dce6ed!important;
+      }
+      .wrap.fs-content-light tr:hover td,
+      .wrap.fs-content-light .entry:hover{background:#f7fafc!important}
+
+      .wrap.fs-content-light .badge,
+      .wrap.fs-content-light .summary-chip{
+        background:#eef4f8!important;color:#526b7e!important;border-color:#d2dfe8!important;
+      }
+      .wrap.fs-content-light .badge.good{background:#edf9f3!important;color:#12865c!important;border-color:#a9ddc6!important}
+      .wrap.fs-content-light .badge.warn{background:#fff8e8!important;color:#946000!important;border-color:#ead29d!important}
+      .wrap.fs-content-light .badge.bad{background:#fff0f1!important;color:#b83b43!important;border-color:#edb9bd!important}
+      .wrap.fs-content-light .fs-success{background:#eaf8f0!important;color:#148254!important}
+      .wrap.fs-content-light .optional-label{background:#e8f1ff!important;color:#2f6fca!important}
+
+      .wrap.fs-content-light .fs-meter,
+      .wrap.fs-content-light .bar,
+      .wrap.fs-content-light .fs-ops-bar{background:#e3ecf2!important}
+      .wrap.fs-content-light .fs-integrations-overview-icon{background:#f0f5f8!important}
+      .wrap.fs-content-light .fs-poster-placeholder,
+      .wrap.fs-content-light .poster.placeholder{background:#eaf1f6!important;color:#6f8596!important}
+      .wrap.fs-content-light .empty-state{background:#fff!important;color:#6d8292!important;border-color:#cbdbe6!important}
+      .wrap.fs-content-light .daypick label{background:#f7fafc!important;color:#253c4e!important;border-color:#cbd9e3!important}
+
+      /* Help/Wiki content. Code blocks stay slightly tinted, but not black. */
+      .wrap.fs-content-light .fs-help-topic:hover{background:#f1f6fa!important}
+      .wrap.fs-content-light .fs-help-topic.active{background:#e5f0ff!important;color:#194d88!important}
+      .wrap.fs-content-light .fs-help-callout{background:#eef6ff!important;border-color:#c4dafa!important;color:#20384d!important}
+      .wrap.fs-content-light .fs-help-article pre,
+      .wrap.fs-content-light .fs-help-article code:not(pre code){background:#edf3f7!important;color:#233b4c!important;border-color:#d2dee7!important}
+      .wrap.fs-content-light .fs-help-article pre code{color:#233b4c!important}
+
+      /* Media details: keep fanart readable, but remove the black fallback block in day mode. */
+      .wrap.fs-content-light .detail-hero{background:#dce8f0!important}
+      .wrap.fs-content-light .movie-file-card .mini-info{background:#f7fafc!important}
+
+      /* Settings-specific cleanup. */
       .wrap.fs-content-light #settingsPane .settings-header,
+      .wrap.fs-content-light #settingsPane .settings-head{background:#f8fbfd!important}
       .wrap.fs-content-light #settingsPane .section,
       .wrap.fs-content-light #settingsPane .setting-callout,
       .wrap.fs-content-light #settingsPane .field,
       .wrap.fs-content-light #settingsPane .table-wrap{
-        background:#fff!important;color:#142435!important;border-color:#d5e1ea!important;box-shadow:none!important
+        background:#fff!important;color:#142435!important;border-color:#d5e1ea!important;box-shadow:none!important;
       }
-      .wrap.fs-content-light #settingsPane .settings-header{background:#f8fbfd!important}
-      .wrap.fs-content-light #settingsPane .section h2,
-      .wrap.fs-content-light #settingsPane .section h3,
-      .wrap.fs-content-light #settingsPane .field label,
-      .wrap.fs-content-light #settingsPane .settings-header h2{color:#142435!important}
-      .wrap.fs-content-light #settingsPane .footer-note,
-      .wrap.fs-content-light #settingsPane .setting-callout,
-      .wrap.fs-content-light #settingsPane .muted{color:#647b8e!important}
-      .wrap.fs-content-light #settingsPane input,
-      .wrap.fs-content-light #settingsPane select,
-      .wrap.fs-content-light #settingsPane textarea{
-        background:#f7fafc!important;color:#142435!important;border-color:#c8d8e3!important
+      .wrap.fs-content-light #settingsPane .setting-callout{background:#f4f8fb!important;color:#647b8e!important}
+
+      /* The operational/live-log console is intentionally dark in BOTH modes for readability.
+         Everything surrounding it follows daylight mode. */
+      .wrap.fs-content-light .fs-ops-log,
+      .wrap.fs-content-light .log{
+        background:#060a0f!important;color:#c9d9e7!important;border-color:#1d2b39!important;
       }
-      .wrap.fs-content-light #settingsPane input:focus,
-      .wrap.fs-content-light #settingsPane select:focus,
-      .wrap.fs-content-light #settingsPane textarea:focus{border-color:#40a7c7!important;box-shadow:0 0 0 2px rgba(38,153,187,.12)!important}
-      .wrap.fs-content-light #settingsPane button:not(.primary):not(.good):not(.danger){background:#eef4f8!important;color:#21384a!important;border-color:#cbd9e3!important}
-      .wrap.fs-content-light #settingsPane .optional-label{background:#e8f1ff!important;color:#2f6fca!important}
 
       .fs-feature-master{margin-bottom:14px!important;border:1px solid color-mix(in srgb,var(--accent2) 28%,var(--line))!important}
       .fs-feature-master-head{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;margin-bottom:12px}
@@ -71,8 +210,6 @@
       const page=q(`.settings-page[data-settings="${section}"]`);if(!page||q(`[data-feature-panel="${key}"]`,page))continue;
       const panel=featurePanel(key);page.insertBefore(panel,page.firstElementChild||null);
     }
-    // The detailed Dialogue section remains useful for strength/codec settings, but the
-    // duplicate enable dropdown is hidden so there is only one obvious master switch.
     const old=q('#sDialogueEnabled');if(old){const field=old.closest('.field');if(field)field.style.display='none';}
     const h=q('#dialogueEnhancementSection h3');if(h){h.childNodes[0].nodeValue='Dialogue Enhancement Details ';const tag=q('.optional-label',h);if(tag)tag.textContent='Advanced';}
     syncFeatureUi();
@@ -98,7 +235,6 @@
   async function saveFeatures(e){
     if(saving)return;
     const next={profanity:q('.fsProfanityToggle')?.checked??featureState.profanity,dialogue:q('.fsDialogueToggle')?.checked??featureState.dialogue};
-    // The toggle that fired is authoritative; mirror duplicate panels before saving.
     if(e?.target?.classList.contains('fsProfanityToggle'))next.profanity=e.target.checked;
     if(e?.target?.classList.contains('fsDialogueToggle'))next.dialogue=e.target.checked;
     featureState=next;syncFeatureUi();saving=true;featureStatus('Saving…');
