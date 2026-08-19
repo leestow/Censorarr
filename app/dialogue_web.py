@@ -89,4 +89,8 @@ def install(app, core) -> None:
         js = core.STATIC / "dialogue-enhancement.js"
         if not js.is_file():
             raise HTTPException(404, "Dialogue Enhancement script not found")
-        return Response(js.read_text(encoding="utf-8"), media_type="application/javascript")
+        content = js.read_text(encoding="utf-8")
+        polish = core.STATIC / "ui-polish.js"
+        if polish.is_file():
+            content += "\n\n/* Family-safe UI polish bundle */\n" + polish.read_text(encoding="utf-8")
+        return Response(content, media_type="application/javascript", headers={"Cache-Control": "no-cache"})
