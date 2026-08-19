@@ -90,6 +90,9 @@ def install(app, core) -> None:
         if not js.is_file():
             raise HTTPException(404, "Dialogue Enhancement script not found")
         content = js.read_text(encoding="utf-8")
+        preflight = core.STATIC / "ui-preflight.js"
+        if preflight.is_file():
+            content += "\n\n/* Family-safe UI preflight guards */\n" + preflight.read_text(encoding="utf-8")
         polish = core.STATIC / "ui-polish.js"
         if polish.is_file():
             content += "\n\n/* Family-safe UI polish bundle */\n" + polish.read_text(encoding="utf-8")
