@@ -23,16 +23,6 @@ Reprocessing replaces the existing CLEAN track rather than stacking additional C
 
 Censorarr does not intentionally destroy the retained original audio track when adding the CLEAN version.
 
-## Dry Run
-
-```yaml
-dry_run: true
-```
-
-Use this for initial evaluation.
-
-Dry Run still reads/transcribes media but does not perform the final media replacement.
-
 ## Review Mode
 
 ```yaml
@@ -57,6 +47,8 @@ safety:
 ```
 
 Censorarr creates temporary output, validates it, and only then replaces the original pathname.
+
+For a new installation, test a small media set first and keep backups of important media until you are comfortable with the workflow.
 
 If you want an additional original-file backup, enable:
 
