@@ -16,6 +16,7 @@ import dialogue_enhancement
 import family_features
 import manual_processing
 import plex_metadata_cache
+import worker_preflight_guard
 
 VERSION = "1.6.8-dev"
 pc.VERSION = VERSION
@@ -30,6 +31,11 @@ plex_metadata_cache.install(pc)
 # This is installed before main() because the stable worker's handle_one() resolves
 # rating_decision dynamically from the censorarr module globals.
 manual_processing.install(pc)
+
+# Manual-job preflight is visible in the heartbeat, and ffprobe can no longer hang
+# indefinitely. The default worker-side probe timeout is 60 seconds and can be
+# overridden with CENSORARR_FFPROBE_TIMEOUT_SECONDS.
+worker_preflight_guard.install(pc, manual_processing)
 
 
 def preserve_processed_media_metadata(src_stat, temp_out: Path, cfg: dict) -> None:
