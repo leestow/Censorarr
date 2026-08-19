@@ -1,13 +1,22 @@
 (() => {
   const q=(s,r=document)=>r.querySelector(s),qa=(s,r=document)=>[...r.querySelectorAll(s)];
   const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  const wait=ms=>new Promise(resolve=>setTimeout(resolve,ms));
 
   async function request(path,options={}){
     const r=await fetch(path,{credentials:'same-origin',headers:{'Content-Type':'application/json'},...options});
     let data={};try{data=await r.json()}catch(_){ }
     if(!r.ok)throw new Error(data.detail||data.error||`HTTP ${r.status}`);return data;
   }
-  const wait=ms=>new Promise(resolve=>setTimeout(resolve,ms));
+
+  function fmtTime(seconds){
+    const s=Math.max(0,Math.round(Number(seconds)||0));
+    if(s<60)return `${s}s`;
+    const m=Math.floor(s/60),r=s%60;
+    if(m<60)return `${m}m ${String(r).padStart(2,'0')}s`;
+    const h=Math.floor(m/60),mm=m%60;
+    return `${h}h ${mm}m`;
+  }
 
   function styles(){
     if(q('#fsAudioTrackManagerStyles'))return;
@@ -18,8 +27,15 @@
       .fs-audio-kind.generated{color:#29d39a;border-color:color-mix(in srgb,#29d39a 45%,var(--line));background:color-mix(in srgb,#29d39a 9%,var(--panel2))}
       .fs-audio-kind.protected{color:var(--muted)}.fs-audio-row.removable{cursor:pointer}.fs-audio-row.removable:hover td{background:color-mix(in srgb,var(--accent2) 8%,var(--panel2))!important}
       .fs-audio-remove{white-space:nowrap}.fs-audio-remove[disabled]{cursor:not-allowed;opacity:.55}.fs-audio-loading{padding:14px;color:var(--muted)}
+      .fs-audio-progress{margin:0 0 11px;padding:12px 13px;border:1px solid color-mix(in srgb,var(--accent2) 45%,var(--line));border-radius:8px;background:color-mix(in srgb,var(--accent2) 7%,var(--panel2))}
+      .fs-audio-progress.error{border-color:color-mix(in srgb,var(--bad) 55%,var(--line));background:color-mix(in srgb,var(--bad) 8%,var(--panel2))}
+      .fs-audio-progress.complete{border-color:color-mix(in srgb,var(--accent) 55%,var(--line));background:color-mix(in srgb,var(--accent) 8%,var(--panel2))}
+      .fs-audio-progress-head{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:5px}.fs-audio-progress-head b{font-size:12px}.fs-audio-progress-pct{font-size:14px;font-weight:850}
+      .fs-audio-progress-stage{font-size:11px;color:var(--muted);margin-bottom:8px}.fs-audio-progress-bar{height:9px;background:var(--panel3);border-radius:999px;overflow:hidden}.fs-audio-progress-bar>span{display:block;height:100%;width:0;background:linear-gradient(90deg,var(--accent2),var(--accent));border-radius:999px;transition:width .25s ease}
+      .fs-audio-progress-meta{display:flex;gap:16px;flex-wrap:wrap;margin-top:7px;color:var(--muted);font-size:10px}
       .wrap.fs-content-light .fs-audio-manager-note{background:#f6f9fc!important;border-color:#d7e3ec!important;color:#526b7e!important}
       .wrap.fs-content-light .fs-audio-kind{background:#f6f9fc!important;border-color:#d7e3ec!important}.wrap.fs-content-light .fs-audio-row.removable:hover td{background:#eef6ff!important}
+      .wrap.fs-content-light .fs-audio-progress{background:#eef6ff!important}.wrap.fs-content-light .fs-audio-progress-bar{background:#d9e5ee!important}
     `;document.head.appendChild(s);
   }
 
@@ -61,33 +77,73 @@
     }catch(e){section.innerHTML=`<h3>Audio tracks</h3><div class="warning">Could not inspect protected audio tracks: ${esc(e.message)}</div>`}
   }
 
+  function showProgress(title){
+    const section=audioSection();if(!section)return null;
+    q('.fs-audio-progress',section)?.remove();
+    const box=document.createElement('div');box.className='fs-audio-progress';
+    box.innerHTML=`<div class="fs-audio-progress-head"><b>Removing ${esc(title)}</b><span class="fs-audio-progress-pct">0%</span></div>
+      <div class="fs-audio-progress-stage">Preparing safe stream-copy remux…</div>
+      <div class="fs-audio-progress-bar"><span></span></div>
+      <div class="fs-audio-progress-meta"><span data-elapsed>Elapsed 0s</span><span data-eta>ETA calculating…</span><span>Original audio protected</span></div>`;
+    const note=q('.fs-audio-manager-note',section);if(note)note.insertAdjacentElement('afterend',box);else section.insertBefore(box,section.children[1]||null);
+    return box;
+  }
+
+  function paintProgress(box,job){
+    if(!box)return;
+    const pct=Math.max(0,Math.min(100,Number(job.progress)||0));
+    q('.fs-audio-progress-pct',box).textContent=`${pct.toFixed(pct<10&&pct%1?1:0)}%`;
+    q('.fs-audio-progress-stage',box).textContent=job.stage||'Working…';
+    q('.fs-audio-progress-bar>span',box).style.width=`${pct}%`;
+    q('[data-elapsed]',box).textContent=`Elapsed ${fmtTime(job.elapsed_seconds)}`;
+    q('[data-eta]',box).textContent=job.eta_seconds!=null&&job.status==='running'?`ETA ~${fmtTime(job.eta_seconds)}`:(job.status==='complete'?'Finished':'ETA calculating…');
+    box.classList.toggle('error',job.status==='error');
+    box.classList.toggle('complete',job.status==='complete');
+  }
+
+  async function monitorRemoval(path,title,jobId,button){
+    const box=showProgress(title);
+    while(true){
+      let payload;
+      try{payload=await request('/api/audio-tracks/remove-job/'+encodeURIComponent(jobId))}
+      catch(e){
+        if(box){box.classList.add('error');q('.fs-audio-progress-stage',box).textContent='Could not read removal progress: '+e.message}
+        if(button){button.disabled=false;button.textContent='Remove'}
+        return;
+      }
+      const job=payload.job||{};paintProgress(box,job);
+      if(job.status==='complete'){
+        if(box){q('.fs-audio-progress-stage',box).textContent=job.message||'Audio track removed safely.'}
+        await wait(700);
+        await renderTracks(path);
+        return;
+      }
+      if(job.status==='error'){
+        const msg=job.error||'Audio-track removal failed.';
+        if(box)q('.fs-audio-progress-stage',box).textContent=msg;
+        if(button){button.disabled=false;button.textContent='Remove'}
+        alert(`Could not remove ${title}:\n\n${msg}`);
+        return;
+      }
+      await wait(500);
+    }
+  }
+
   async function removeTrack(path,streamIndex,button){
     const section=audioSection();
     const row=section&&q(`.fs-audio-row[data-stream="${streamIndex}"]`,section);
     const title=q('.fs-audio-title',row)?.textContent?.trim()||'this Censorarr audio track';
     const ok=confirm(`Remove ${title}?\n\nOnly this Censorarr-created audio stream will be removed. Original/pre-existing audio, video, subtitles and chapters are protected.\n\nCensorarr will remember this removal and automation will NOT recreate the track unless you manually Process/Reprocess this movie.`);
     if(!ok)return;
-    if(button){button.disabled=true;button.textContent='Removing…'}
-    let resumeAfter=false;
+    qa('.fs-audio-remove:not([disabled])',section).forEach(x=>x.disabled=true);
+    if(button)button.textContent='Starting…';
     try{
-      // Prevent the automatic worker from claiming this movie while the maintenance
-      // remux is in progress. Preserve an existing user pause exactly as it was.
-      const status=await request('/api/status');
-      if(!status.paused){
-        await request('/api/control/pause',{method:'POST',body:'{}'});
-        resumeAfter=true;
-        await wait(250);
-      }
-      const result=await request('/api/audio-tracks/remove',{method:'POST',body:JSON.stringify({path,stream_index:streamIndex})});
-      await renderTracks(path);
-      if(result.message)alert(result.message);
+      const result=await request('/api/audio-tracks/remove-job',{method:'POST',body:JSON.stringify({path,stream_index:streamIndex})});
+      if(button)button.textContent='Removing…';
+      await monitorRemoval(path,title,result.job_id,button);
     }catch(e){
       alert(`Could not remove ${title}:\n\n${e.message}`);
-      if(button){button.disabled=false;button.textContent='Remove'}
-    }finally{
-      if(resumeAfter){
-        try{await request('/api/control/resume',{method:'POST',body:'{}'})}catch(_){ }
-      }
+      qa('.fs-audio-row.removable .fs-audio-remove',section).forEach(x=>{x.disabled=false;x.textContent='Remove'});
     }
   }
 
