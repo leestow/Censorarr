@@ -14,7 +14,7 @@ docker compose up -d --build
 
 6. Open `http://YOUR-SERVER-IP:8087` (or the host port you selected).
 7. Complete the guided Setup Wizard.
-8. Start in **Dry Run** while validating your environment.
+8. Validate a small test folder or small media set before expanding to the full library.
 
 ## GPU Worker
 
