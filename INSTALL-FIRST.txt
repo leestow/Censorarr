@@ -6,7 +6,7 @@ CENSORARR v1.6.5 — FIRST INSTALL
      docker compose up -d --build
 4. Open the web UI on the configured host port.
 5. Complete the Setup Wizard.
-6. Begin in Dry Run mode and test a small number of files before Apply mode.
+6. Begin with a small test folder or a small number of files before expanding to the full library.
 
 Persistent runtime data belongs under /config and /work.
 The default log is /config/censorarr.log.
