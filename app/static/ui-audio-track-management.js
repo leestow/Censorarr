@@ -1,13 +1,13 @@
 (() => {
   const q=(s,r=document)=>r.querySelector(s),qa=(s,r=document)=>[...r.querySelectorAll(s)];
   const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-  let currentMovie=null;
 
   async function request(path,options={}){
     const r=await fetch(path,{credentials:'same-origin',headers:{'Content-Type':'application/json'},...options});
     let data={};try{data=await r.json()}catch(_){ }
     if(!r.ok)throw new Error(data.detail||data.error||`HTTP ${r.status}`);return data;
   }
+  const wait=ms=>new Promise(resolve=>setTimeout(resolve,ms));
 
   function styles(){
     if(q('#fsAudioTrackManagerStyles'))return;
@@ -68,13 +68,26 @@
     const ok=confirm(`Remove ${title}?\n\nOnly this Censorarr-created audio stream will be removed. Original/pre-existing audio, video, subtitles and chapters are protected.\n\nCensorarr will remember this removal and automation will NOT recreate the track unless you manually Process/Reprocess this movie.`);
     if(!ok)return;
     if(button){button.disabled=true;button.textContent='Removing…'}
+    let resumeAfter=false;
     try{
+      // Prevent the automatic worker from claiming this movie while the maintenance
+      // remux is in progress. Preserve an existing user pause exactly as it was.
+      const status=await request('/api/status');
+      if(!status.paused){
+        await request('/api/control/pause',{method:'POST',body:'{}'});
+        resumeAfter=true;
+        await wait(250);
+      }
       const result=await request('/api/audio-tracks/remove',{method:'POST',body:JSON.stringify({path,stream_index:streamIndex})});
       await renderTracks(path);
       if(result.message)alert(result.message);
     }catch(e){
       alert(`Could not remove ${title}:\n\n${e.message}`);
       if(button){button.disabled=false;button.textContent='Remove'}
+    }finally{
+      if(resumeAfter){
+        try{await request('/api/control/resume',{method:'POST',body:'{}'})}catch(_){ }
+      }
     }
   }
 
@@ -82,7 +95,6 @@
     const old=window.renderMovieDetailPage;
     if(typeof old!=='function'||old.__fsAudioTrackManager)return false;
     const wrapped=function(d){
-      currentMovie=d||null;
       const out=old.apply(this,arguments);
       if(d?.media_path)setTimeout(()=>renderTracks(d.media_path),0);
       return out;
