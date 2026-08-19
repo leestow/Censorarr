@@ -69,20 +69,36 @@ def install(app, core) -> None:
     for key, value in DEFAULTS.items():
         defaults.setdefault(key, value)
 
-    # Family-safe no longer exposes an analyze-only mode. Keep the legacy config key forced
-    # false for compatibility with the older processor while removing it from the UI/docs.
+    # Family-safe has one processing behavior. The underlying engine keeps its old config
+    # field for backward compatibility, but this branch pins it off before any worker starts.
     core.pc.DEFAULT_CONFIG["dry_run"] = False
     os.environ.pop("DRY_RUN", None)
-    try:
-        if core.CONFIG.exists():
-            raw_cfg = core.yaml.safe_load(core.CONFIG.read_text(encoding="utf-8")) or {}
-            if raw_cfg.get("dry_run") is not False:
-                raw_cfg["dry_run"] = False
-                tmp = core.CONFIG.with_suffix(".tmp")
-                tmp.write_text(core.yaml.safe_dump(raw_cfg, sort_keys=False), encoding="utf-8")
-                os.replace(tmp, core.CONFIG)
-    except Exception as exc:
-        core.pc.logging.warning("Could not migrate retired processing-mode setting: %s", exc)
+
+    def force_normal_processing_config(path) -> None:
+        try:
+            raw_cfg = core.yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+            if raw_cfg.get("dry_run") is False:
+                return
+            raw_cfg["dry_run"] = False
+            tmp = path.with_suffix(".tmp")
+            tmp.write_text(core.yaml.safe_dump(raw_cfg, sort_keys=False), encoding="utf-8")
+            os.replace(tmp, path)
+        except Exception as exc:
+            core.pc.logging.warning("Could not migrate retired processing-mode setting: %s", exc)
+
+    # ensure_config runs immediately before the worker supervisor starts. Wrapping it makes
+    # fresh installs safe too: the example config may omit the retired field entirely, but
+    # the worker still receives an explicit false value rather than inheriting a legacy default.
+    original_ensure_config = core.pc.ensure_config
+    if not getattr(original_ensure_config, "_family_safe_single_mode", False):
+        def ensure_config_single_mode(path) -> None:
+            original_ensure_config(path)
+            force_normal_processing_config(path)
+        ensure_config_single_mode._family_safe_single_mode = True
+        core.pc.ensure_config = ensure_config_single_mode
+
+    if core.CONFIG.exists():
+        force_normal_processing_config(core.CONFIG)
 
     @app.get("/api/dialogue-enhancement/settings")
     def get_dialogue_settings(_: bool = Depends(core.auth)):
