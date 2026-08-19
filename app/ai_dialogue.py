@@ -29,6 +29,16 @@ DEFAULT_MODEL = "mdx_q"
 DEFAULT_SEGMENT_SECONDS = 4
 
 
+def _fmt_clock(seconds: float | int | None) -> str:
+    try:
+        total = max(0, int(float(seconds or 0)))
+    except (TypeError, ValueError):
+        total = 0
+    h, rem = divmod(total, 3600)
+    m, sec = divmod(rem, 60)
+    return f"{h:02d}:{m:02d}:{sec:02d}"
+
+
 def _dialogue_cfg(cfg: dict) -> dict:
     return cfg.get("dialogue_enhancement", {}) or {}
 
@@ -80,6 +90,7 @@ def _remote_isolate(
     dest_flac: Path,
     cfg: dict,
     progress_callback: Callable[[float], None] | None = None,
+    log_callback: Callable[[str], None] | None = None,
 ) -> dict:
     base = _worker_base(cfg)
     if not base:
@@ -135,39 +146,78 @@ def _remote_isolate(
         pass
 
     def poll() -> None:
+        last_stage = ""
+        last_bucket = -1
+        last_log_at = 0.0
         while not stop.wait(1.0):
             try:
                 payload = remote_asr.status(cfg, timeout=2.5)
                 cur = payload.get("current_job") if isinstance(payload, dict) else None
                 if not isinstance(cur, dict) or str(cur.get("job_id") or "") != job_id:
                     continue
+                stage = str(cur.get("stage") or "working")
                 raw = cur.get("progress")
+                worker_pct = None
                 if raw is not None:
                     try:
+                        worker_pct = max(0.0, min(100.0, float(raw)))
                         # Reserve 15% for extraction and 20% for final remix/remux.
-                        pct = 15.0 + max(0.0, min(100.0, float(raw))) * 0.65
+                        pct = 15.0 + worker_pct * 0.65
                     except (TypeError, ValueError):
                         pct = 45.0
                 else:
-                    stage = str(cur.get("stage") or "")
                     pct = 20.0 if "load" in stage else 45.0
                 if progress_callback:
                     progress_callback(pct)
+
+                now = time.time()
+                bucket = int(worker_pct // 5) * 5 if worker_pct is not None else -1
+                should_log = (
+                    stage != last_stage
+                    or (bucket >= 0 and bucket > last_bucket)
+                    or now - last_log_at >= 30.0
+                )
+                if should_log and log_callback:
+                    elapsed = cur.get("elapsed_seconds")
+                    if elapsed is None:
+                        elapsed = now - started
+                    eta = cur.get("eta_seconds")
+                    progress_text = f"{worker_pct:.1f}%" if worker_pct is not None else "calculating"
+                    eta_text = _fmt_clock(eta) if eta is not None else "calculating"
+                    log_callback(
+                        f"AI Dialogue GPU job {job_id[:8]}: stage={stage} progress={progress_text} "
+                        f"device={cur.get('device') or 'pending'} elapsed={_fmt_clock(elapsed)} eta={eta_text}"
+                    )
+                    last_stage = stage
+                    if bucket >= 0:
+                        last_bucket = max(last_bucket, bucket)
+                    last_log_at = now
             except Exception:
                 continue
 
     try:
+        if log_callback:
+            log_callback(
+                f"AI Dialogue GPU job {job_id[:8]}: uploading {size / 1024 / 1024:.1f}MB FLAC "
+                f"to {base} model={model} segment={segment}s"
+            )
         conn.putrequest("POST", endpoint)
         for key, value in headers.items():
             conn.putheader(key, value)
         conn.endheaders()
+        sent = 0
         with source_flac.open("rb") as fh:
             while True:
                 chunk = fh.read(1024 * 1024)
                 if not chunk:
                     break
                 conn.send(chunk)
-        if progress_callback:
+                sent += len(chunk)
+        if log_callback:
+            log_callback(
+                f"AI Dialogue GPU job {job_id[:8]}: upload complete ({sent / 1024 / 1024:.1f}MB); waiting for separation"
+            )
+        if progress_callback or log_callback:
             poller = threading.Thread(target=poll, daemon=True, name=f"dialogue-ai-{job_id[:8]}")
             poller.start()
 
@@ -177,16 +227,25 @@ def _remote_isolate(
         if response.status >= 300:
             message = response.read(8192).decode("utf-8", errors="replace")
             raise AIDialogueError(f"GPU worker AI dialogue HTTP {response.status}: {message[-1500:]}")
+        if log_callback:
+            log_callback(f"AI Dialogue GPU job {job_id[:8]}: worker finished separation; downloading dialogue stem")
+        received = 0
         with dest_flac.open("wb") as out:
             while True:
                 chunk = response.read(1024 * 1024)
                 if not chunk:
                     break
                 out.write(chunk)
+                received += len(chunk)
         if not dest_flac.exists() or dest_flac.stat().st_size < 1024:
             raise AIDialogueError("GPU worker returned an empty dialogue stem")
         if progress_callback:
             progress_callback(80.0)
+        if log_callback:
+            log_callback(
+                f"AI Dialogue GPU job {job_id[:8]}: dialogue stem received ({received / 1024 / 1024:.1f}MB) "
+                f"total elapsed={_fmt_clock(time.time() - started)}"
+            )
         return {
             "job_id": job_id,
             "model": response.getheader("X-Censorarr-Dialogue-Model") or model,
@@ -330,22 +389,49 @@ def add_ai_dialogue_track(
     enhanced_flac = workdir / "enhanced.flac"
     try:
         pc.logging.info("AI Dialogue: extracting selected source audio as stereo FLAC")
+        extract_started = time.time()
         _extract_source_flac(pc, src, audio_rel, source_flac, progress_callback)
+        pc.logging.info(
+            "AI Dialogue: source extraction complete in %s (%0.1fMB)",
+            _fmt_clock(time.time() - extract_started),
+            source_flac.stat().st_size / 1024 / 1024,
+        )
         caps = worker_capabilities(cfg)
         if not caps.get("dialogue_ai"):
             reason = caps.get("reason") or "GPU worker does not advertise dialogue_ai"
             raise AIDialogueError(str(reason))
+        pc.logging.info(
+            "AI Dialogue: GPU worker ready version=%s cuda_devices=%s",
+            caps.get("version") or "unknown",
+            caps.get("cuda_devices"),
+        )
 
         pc.logging.info(
             "AI Dialogue: isolating dialogue on GPU worker (model=%s)",
             dcfg.get("ai_model") or DEFAULT_MODEL,
         )
-        remote_meta = _remote_isolate(source_flac, stem_flac, cfg, progress_callback)
-        pc.logging.info(
-            "AI Dialogue: isolated stem complete (model=%s device=%s elapsed=%ss)",
-            remote_meta.get("model"), remote_meta.get("device"), remote_meta.get("elapsed_seconds"),
+        remote_meta = _remote_isolate(
+            source_flac,
+            stem_flac,
+            cfg,
+            progress_callback,
+            lambda message: pc.logging.info("%s", message),
         )
+        pc.logging.info(
+            "AI Dialogue: isolated stem complete (job=%s model=%s device=%s elapsed=%ss)",
+            str(remote_meta.get("job_id") or "")[:8],
+            remote_meta.get("model"),
+            remote_meta.get("device"),
+            remote_meta.get("elapsed_seconds"),
+        )
+        pc.logging.info("AI Dialogue: building dialogue-aware ducking remix")
+        mix_started = time.time()
         mix_meta = _build_enhanced_flac(pc, source_flac, stem_flac, enhanced_flac, cfg, progress_callback)
+        pc.logging.info(
+            "AI Dialogue: ducking remix complete in %s (%0.1fMB)",
+            _fmt_clock(time.time() - mix_started),
+            enhanced_flac.stat().st_size / 1024 / 1024,
+        )
 
         current_probe = pc.ffprobe(out)
         existing = find_named_audio(current_probe, title)
@@ -358,6 +444,12 @@ def add_ai_dialogue_track(
         if temp.exists():
             temp.unlink()
         try:
+            pc.logging.info(
+                "AI Dialogue: remuxing enhanced track into media (replace_existing=%s retained_audio=%d)",
+                replace,
+                retained_audio_count,
+            )
+            remux_started = time.time()
             cmd = [
                 "ffmpeg", "-hide_banner", "-loglevel", "warning", "-y",
                 "-i", str(out), "-i", str(enhanced_flac),
@@ -394,6 +486,7 @@ def add_ai_dialogue_track(
                 pc.run_ffmpeg_progress(cmd, duration, lambda pct: progress_callback(88.0 + min(12.0, pct * 0.12)))
             else:
                 pc.run(cmd)
+            pc.logging.info("AI Dialogue: media remux complete in %s; validating track", _fmt_clock(time.time() - remux_started))
             check = pc.ffprobe(temp)
             found = find_named_audio(check, title)
             if len(found) != 1:
@@ -401,6 +494,7 @@ def add_ai_dialogue_track(
                     f"AI Dialogue validation failed: expected one track titled {title!r}, found {len(found)}"
                 )
             os.replace(temp, out)
+            pc.logging.info("AI Dialogue: validated and installed track: %s", title)
         finally:
             try:
                 if temp.exists():
