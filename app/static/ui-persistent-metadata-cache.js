@@ -1,13 +1,12 @@
 (() => {
   /*
    * Keep the last successful Movies/TV catalog in browser storage so a full page
-   * reload can paint the redesigned Overview immediately. The older runtime cache
-   * is memory-only and disappears on every reload.
+   * reload can paint the redesigned Overview immediately. The backend also keeps a
+   * persistent /config snapshot, so a different browser or container restart can
+   * still avoid waiting on Radarr/Sonarr/Bazarr after the cache has been seeded once.
    *
-   * This is stale-while-revalidate by design: cached metadata is returned at once,
-   * while a real request refreshes the saved copy quietly in the background. Live
-   * processing/progress still comes from the normal status endpoints and is never
-   * served from this cache.
+   * Live processing/progress still comes from the normal status endpoints and is
+   * never served from this metadata cache.
    */
   const upstreamFetch = window.fetch.bind(window);
   const PREFIX = 'censorarr-media-catalog-v2:';
@@ -25,6 +24,10 @@
       kind: url.searchParams.get('kind') || 'movies',
       force: url.searchParams.get('force') === 'true',
     };
+  }
+
+  function fastUrl(kind, force=false) {
+    return `/api/media-catalog-fast?kind=${encodeURIComponent(kind)}${force ? '&force=true' : ''}`;
   }
 
   function key(kind) { return PREFIX + kind; }
@@ -72,9 +75,9 @@
     return response;
   }
 
-  function refreshInBackground(input, init, kind) {
+  function refreshInBackground(kind) {
     if (inflight.has(kind)) return;
-    const job = upstreamFetch(input, init)
+    const job = upstreamFetch(fastUrl(kind, false), {credentials:'same-origin'})
       .then(response => saveResponse(kind, response))
       .then(() => window.dispatchEvent(new CustomEvent('censorarr-metadata-refreshed', {detail:{kind}})))
       .catch(err => console.debug(`Censorarr ${kind} metadata refresh failed:`, err))
@@ -86,23 +89,24 @@
     const info = catalogInfo(input, init);
     if (!info) return upstreamFetch(input, init);
 
-    // Explicit Refresh Metadata always waits for the real service and then replaces
-    // the persistent snapshot with the fresh response.
+    // Explicit Refresh Metadata bypasses both browser and server stale snapshots.
     if (info.force) {
-      const response = await upstreamFetch(input, init);
+      const response = await upstreamFetch(fastUrl(info.kind, true), {credentials:'same-origin'});
       await saveResponse(info.kind, response);
       return response;
     }
 
     const saved = readSaved(info.kind);
     if (saved) {
-      refreshInBackground(input, init, info.kind);
+      // Paint now from localStorage. The backend endpoint itself is stale-while-
+      // revalidate and normally returns its /config snapshot immediately as well.
+      refreshInBackground(info.kind);
       return responseFrom(saved);
     }
 
-    // First visit on this browser/device has nothing to paint yet, so seed the cache
-    // from the normal request. Every later reload can use this saved snapshot.
-    const response = await upstreamFetch(input, init);
+    // A browser with no local cache asks the persistent server snapshot first. Only
+    // the first-ever metadata load on an installation has to wait for the integrations.
+    const response = await upstreamFetch(fastUrl(info.kind, false), {credentials:'same-origin'});
     await saveResponse(info.kind, response);
     return response;
   };
