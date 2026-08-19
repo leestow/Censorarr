@@ -44,6 +44,15 @@ def _marker_entry(core, media: Path, cfg: dict) -> tuple[dict, dict]:
 
 def _known_generated(core, media: Path, cfg: dict) -> dict[str, str]:
     _data, entry = _marker_entry(core, media, cfg)
+    # Safety boundary: never let a stale marker unlock a similarly named track in a
+    # replacement file. If the marker does not describe this exact current file, every
+    # audio stream remains protected.
+    try:
+        if not entry or str(entry.get("fingerprint") or "") != str(core.pc.fingerprint(media)):
+            return {}
+    except Exception:
+        return {}
+
     features = entry.get("features") or {}
     known: dict[str, str] = {}
     for feature in (FEATURE_PROFANITY, FEATURE_DIALOGUE):
@@ -56,12 +65,7 @@ def _known_generated(core, media: Path, cfg: dict) -> dict[str, str]:
             known[title.lower()] = feature
 
     top_status = str(entry.get("status") or "").lower()
-    try:
-        state_status = str(core.state_row_for(media).get("status") or "").lower()
-    except Exception:
-        state_status = ""
-    statuses = {top_status, state_status}
-    if "applied" in statuses:
+    if top_status == "applied":
         clean_title = str((cfg.get("clean_track", {}) or {}).get("title", "English - CLEAN")).strip()
         if clean_title:
             known.setdefault(clean_title.lower(), FEATURE_PROFANITY)
@@ -69,7 +73,7 @@ def _known_generated(core, media: Path, cfg: dict) -> dict[str, str]:
         dialogue_title = str((cfg.get("dialogue_enhancement", {}) or {}).get("title", "English - DIALOGUE ENHANCED")).strip()
         if dialogue_title and isinstance(drec, dict) and str(drec.get("status") or "").lower() == "applied":
             known.setdefault(dialogue_title.lower(), FEATURE_DIALOGUE)
-    if "dialogue-applied" in statuses:
+    if top_status == "dialogue-applied":
         title = str((cfg.get("dialogue_enhancement", {}) or {}).get("title", "English - DIALOGUE ENHANCED")).strip()
         if title:
             known.setdefault(title.lower(), FEATURE_DIALOGUE)
