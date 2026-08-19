@@ -47,7 +47,7 @@ sudo docker compose up -d --build
 
 7. Browse to the host port from `docker-compose.yml` (the shipped example is `8087:8787`).
 8. Complete the guided Setup Wizard.
-9. Start in **Dry Run** and test a small number of files before enabling Apply mode.
+9. Test a small media set and confirm the complete CLEAN-track workflow before expanding to the full library.
 
 ## Permissions
 
@@ -120,4 +120,4 @@ The v1.6.5 self-test covers dictionary/fuzzy matching, large mute lists, subtitl
 
 ## Limits
 
-No ASR/subtitle system guarantees 100% profanity recall. Test your configuration and use Review Mode where accuracy is especially important.
+No ASR/subtitle system guarantees 100% profanity recall. Test your configuration on a small media set and use Review Mode where accuracy is especially important.
