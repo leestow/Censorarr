@@ -242,3 +242,16 @@
     setTimeout(() => check(false), 1200);
   }
 })();
+
+(() => {
+  const load = () => {
+    if (document.querySelector('script[data-family-dashboard]')) return;
+    const script = document.createElement('script');
+    script.src = '/family-dashboard.js?v=1';
+    script.defer = true;
+    script.dataset.familyDashboard = '1';
+    document.head.appendChild(script);
+  };
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', load, { once:true });
+  else load();
+})();
