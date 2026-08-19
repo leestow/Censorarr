@@ -84,14 +84,14 @@ Fresh installations open a guided Setup Wizard automatically and remain idle unt
 
 It walks through:
 
-1. Movies and TV folders, plus Dry Run / Apply mode.
+1. Movies and TV folders.
 2. Local CPU vs remote GPU transcription.
 3. Optional Plex setup.
 4. Optional Radarr and Sonarr setup.
 5. Subtitle assistance and optional Bazarr setup.
 6. A final review before automatic processing is enabled.
 
-**Start with Dry Run and test a small number of files before switching to Apply mode.**
+For a new installation, start with a small test folder or a small number of files. Confirm permissions, transcription, CLEAN-track creation, validation, and playback before expanding to the full library.
 
 ## Installation choices
 
@@ -132,7 +132,7 @@ Whisper performs the primary transcription. Censorarr can also use subtitle evid
 
 ## Safety
 
-Censorarr writes a temporary output, validates it, and only then replaces the original pathname. Keep backups of important media and begin with **Dry Run** when evaluating a new installation.
+Censorarr writes a temporary output, validates it, and only then replaces the original pathname. Keep backups of important media and test a small media set when evaluating a new installation.
 
 ## Credentials
 
