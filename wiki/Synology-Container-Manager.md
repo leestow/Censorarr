@@ -142,17 +142,17 @@ http://NAS-IP:8087
 
 Complete the Setup Wizard.
 
-## 7. Start in Dry Run
+## 7. Test a small media set first
 
 For a clean first test, use:
 
 - `/media`
 - `/tv` if applicable
 - local CPU
-- Dry Run
 - no optional integrations
+- a small test folder or a handful of media files
 
-After the core works, add Plex/Radarr/Sonarr/Bazarr/GPU.
+Confirm the complete CLEAN-track workflow works before expanding to the full library. After the core works, add Plex/Radarr/Sonarr/Bazarr/GPU.
 
 ## Permission troubleshooting
 
