@@ -5,6 +5,7 @@ import asyncio
 import os
 import shutil
 import tempfile
+import time
 import uuid
 from pathlib import Path
 
@@ -92,7 +93,8 @@ async def dialogue_isolate(
         raise HTTPException(409, "GPU worker is already running an AI dialogue job")
 
     clen = request.headers.get("content-length")
-    if clen and int(clen) > int(base.MAX_UPLOAD_GB * 1024**3):
+    expected = int(clen) if clen and str(clen).isdigit() else 0
+    if expected > int(base.MAX_UPLOAD_GB * 1024**3):
         raise HTTPException(413, "Audio upload exceeds ASR_MAX_UPLOAD_GB")
 
     jid = (job_id or request.headers.get("X-Censorarr-Job-ID") or uuid.uuid4().hex).strip()
@@ -101,7 +103,14 @@ async def dialogue_isolate(
     output = root / "separated"
     output.mkdir(parents=True, exist_ok=True)
     total = 0
+    upload_started = time.time()
+    last_upload_log = upload_started
     try:
+        base.log_line(
+            f"Accepted AI dialogue job {jid[:8]} model={model} segment={segment}s "
+            f"upload={(expected / 1024 / 1024):.1f}MB" if expected else
+            f"Accepted AI dialogue job {jid[:8]} model={model} segment={segment}s upload=unknown"
+        )
         with source.open("wb") as fh:
             async for chunk in request.stream():
                 if not chunk:
@@ -110,7 +119,21 @@ async def dialogue_isolate(
                 if total > int(base.MAX_UPLOAD_GB * 1024**3):
                     raise HTTPException(413, "Audio upload too large")
                 fh.write(chunk)
-        base.log_line(f"Received AI dialogue job {jid[:8]} model={model} bytes={total}")
+                now = time.time()
+                if now - last_upload_log >= 10.0:
+                    if expected > 0:
+                        pct = min(100.0, 100.0 * total / expected)
+                        base.log_line(
+                            f"AI dialogue job {jid[:8]} upload: {pct:.1f}% "
+                            f"({total / 1024 / 1024:.1f}/{expected / 1024 / 1024:.1f}MB)"
+                        )
+                    else:
+                        base.log_line(f"AI dialogue job {jid[:8]} upload: {total / 1024 / 1024:.1f}MB received")
+                    last_upload_log = now
+        base.log_line(
+            f"Received AI dialogue job {jid[:8]} model={model} bytes={total} "
+            f"upload_elapsed={time.time() - upload_started:.1f}s"
+        )
 
         try:
             vocals, device = await asyncio.to_thread(
@@ -132,7 +155,10 @@ async def dialogue_isolate(
                 raise HTTPException(409, str(exc))
             raise HTTPException(500, str(exc))
 
-        base.log_line(f"Completed AI dialogue job {jid[:8]} model={model} device={device}")
+        base.log_line(
+            f"Completed AI dialogue job {jid[:8]} model={model} device={device} "
+            f"stem={vocals.stat().st_size / 1024 / 1024:.1f}MB"
+        )
         return FileResponse(
             path=str(vocals),
             media_type="audio/flac",
