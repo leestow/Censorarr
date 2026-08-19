@@ -94,6 +94,18 @@
     };
   }
 
+  function cachedFullPreview(saved) {
+    if (!saved?.data) return null;
+    const d = saved.data;
+    return {
+      ...d,
+      path: d.media_path || d.path || '',
+      media_path: '',
+      tracks: {audio: [], subtitles: []},
+      _cached_preview: true,
+    };
+  }
+
   function showPreviewHint() {
     const root = document.getElementById('mediaDetail');
     if (!root || document.getElementById('fsMovieDetailPreviewHint')) return;
@@ -133,7 +145,7 @@
       const cacheKey = String(Number(id));
       const saved = movieDetailCache.get(cacheKey);
       const savedFresh = saved && Date.now() - Number(saved.time || 0) < 10 * 60 * 1000;
-      const preview = savedFresh ? saved.data : previewMovieDetail(catalogMovie(id), id);
+      const preview = savedFresh ? cachedFullPreview(saved) : previewMovieDetail(catalogMovie(id), id);
       let painted = false;
 
       if (preview && typeof window.renderMovieDetailPage === 'function') {
@@ -143,7 +155,7 @@
         if (subtitle) subtitle.textContent = 'Movie processing status';
         window.renderMovieDetailPage(preview);
         painted = true;
-        if (!savedFresh) showPreviewHint();
+        showPreviewHint();
       } else if (detailRoot) {
         detailRoot.innerHTML = '<div class="empty-state">Loading details…</div>';
       }
