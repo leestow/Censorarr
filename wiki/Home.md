@@ -82,12 +82,11 @@ Open a movie for a detailed view of its file, metadata, CLEAN conversion status,
 Start with:
 
 - a small test folder or small media set,
-- **Dry Run** enabled,
 - local CPU first if you want to validate the main install before adding the GPU Worker,
 - optional integrations disabled until the core scan works.
 
-Once Censorarr can see and analyze your test files correctly, add integrations one at a time.
+Once Censorarr can see and process your test files correctly, add integrations one at a time.
 
 ## Important safety note
 
-No speech-recognition or subtitle system can guarantee 100% profanity recall. Censorarr writes temporary output, validates it, and only then replaces the original pathname, but you should still keep backups of important media and test your settings before using Apply mode across a full library.
+No speech-recognition or subtitle system can guarantee 100% profanity recall. Censorarr writes temporary output, validates it, and only then replaces the original pathname, but you should still keep backups of important media and test your settings on a small media set before using automated processing across a full library.
