@@ -96,7 +96,7 @@ For Movies and TV folders, use real Linux paths such as:
 
 The **Browse...** button starts at the Linux filesystem root during first-run setup. After setup completes, browsing and manual processing are constrained to the configured media roots.
 
-Start with **Dry Run** enabled and test a small media set before switching to Apply mode.
+Start with a small test folder or small media set before expanding to the full library.
 
 ## Media permissions
 
@@ -106,7 +106,7 @@ The package creates a dedicated system account:
 censorarr
 ```
 
-That account must be able to read your source media and, in Apply mode, write to the media location.
+That account must be able to read and write your configured media locations because Censorarr creates and validates replacement media files during processing.
 
 The cleanest approach is usually to add `censorarr` to the group that already owns your media.
 
