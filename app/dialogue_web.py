@@ -96,6 +96,9 @@ def install(app, core) -> None:
         polish = core.STATIC / "ui-polish.js"
         if polish.is_file():
             content += "\n\n/* Family-safe UI polish bundle */\n" + polish.read_text(encoding="utf-8")
+        brand = core.STATIC / "ui-brand-hotfix.js"
+        if brand.is_file():
+            content += "\n\n/* Family-safe branding hotfix */\n" + brand.read_text(encoding="utf-8")
         live_fix = core.STATIC / "ui-live-fix.js"
         if live_fix.is_file():
             content += "\n\n/* Family-safe live status fixes */\n" + live_fix.read_text(encoding="utf-8")
