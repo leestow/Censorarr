@@ -21,6 +21,7 @@ WIKI_TTL_SECONDS = 6 * 3600
 def _payload(cfg: dict) -> dict:
     current = dict(DEFAULTS)
     current.update(cfg.get("dialogue_enhancement", {}) or {})
+    current["profanity_censoring_enabled"] = bool((cfg.get("profanity", {}) or {}).get("enabled", True))
     return current
 
 
@@ -68,6 +69,7 @@ def install(app, core) -> None:
     defaults = core.pc.DEFAULT_CONFIG.setdefault("dialogue_enhancement", {})
     for key, value in DEFAULTS.items():
         defaults.setdefault(key, value)
+    core.pc.DEFAULT_CONFIG.setdefault("profanity", {}).setdefault("enabled", True)
 
     # Family-safe has one processing behavior. The underlying engine keeps its old config
     # field for backward compatibility, but this branch pins it off before any worker starts.
@@ -77,18 +79,25 @@ def install(app, core) -> None:
     def force_normal_processing_config(path) -> None:
         try:
             raw_cfg = core.yaml.safe_load(path.read_text(encoding="utf-8")) or {}
-            if raw_cfg.get("dry_run") is False:
+            changed = False
+            if raw_cfg.get("dry_run") is not False:
+                raw_cfg["dry_run"] = False
+                changed = True
+            profanity = raw_cfg.setdefault("profanity", {})
+            if "enabled" not in profanity:
+                profanity["enabled"] = True
+                changed = True
+            if not changed:
                 return
-            raw_cfg["dry_run"] = False
             tmp = path.with_suffix(".tmp")
             tmp.write_text(core.yaml.safe_dump(raw_cfg, sort_keys=False), encoding="utf-8")
             os.replace(tmp, path)
         except Exception as exc:
-            core.pc.logging.warning("Could not migrate retired processing-mode setting: %s", exc)
+            core.pc.logging.warning("Could not migrate family-safe processing settings: %s", exc)
 
     # ensure_config runs immediately before the worker supervisor starts. Wrapping it makes
-    # fresh installs safe too: the example config may omit the retired field entirely, but
-    # the worker still receives an explicit false value rather than inheriting a legacy default.
+    # fresh installs safe too: the example config may omit retired/new feature fields, but
+    # the worker receives explicit family-safe defaults before it starts.
     original_ensure_config = core.pc.ensure_config
     if not getattr(original_ensure_config, "_family_safe_single_mode", False):
         def ensure_config_single_mode(path) -> None:
@@ -111,6 +120,9 @@ def install(app, core) -> None:
         current = raw.setdefault("dialogue_enhancement", {})
 
         current["enabled"] = bool(body.get("enabled", current.get("enabled", False)))
+        if "profanity_censoring_enabled" in body:
+            raw.setdefault("profanity", {})["enabled"] = bool(body.get("profanity_censoring_enabled"))
+
         title = str(body.get("title", current.get("title", DEFAULTS["title"])) or "").strip()
         if not title:
             raise HTTPException(400, "Dialogue-enhanced track name cannot be blank")
@@ -149,7 +161,7 @@ def install(app, core) -> None:
         return {
             "ok": True,
             "settings": _payload(raw),
-            "message": "Dialogue Enhancement settings saved. The worker will reload after the current item.",
+            "message": "Audio feature settings saved. The worker will reload after the current item.",
         }
 
     def wiki_cache_dir():
@@ -249,4 +261,7 @@ def install(app, core) -> None:
         wiki = core.STATIC / "ui-wiki.js"
         if wiki.is_file():
             content += "\n\n/* Full in-app Wiki */\n" + wiki.read_text(encoding="utf-8")
+        usability = core.STATIC / "ui-usability-pass.js"
+        if usability.is_file():
+            content += "\n\n/* Family-safe usability pass */\n" + usability.read_text(encoding="utf-8")
         return Response(content, media_type="application/javascript", headers={"Cache-Control": "no-cache"})
