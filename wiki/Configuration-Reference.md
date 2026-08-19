@@ -13,7 +13,6 @@ The Setup Wizard and Settings UI manage most common values. This page explains t
 | `scan_interval_seconds` | `120` | Automatic scan interval |
 | `stable_seconds` | `300` | Wait for new files to stop changing |
 | `process_existing` | `true` | Include existing library |
-| `dry_run` | `true` | Analyze without final media replacement |
 
 ## Setup
 
