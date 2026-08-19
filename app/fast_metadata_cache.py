@@ -21,6 +21,21 @@ def install(app, core) -> None:
     def cache_path(kind: str) -> Path:
         return cache_dir / f"{kind}.json"
 
+    def valid_catalog(data) -> bool:
+        """Only cache a catalog that actually contains media rows.
+
+        An optional integration can transiently return an empty successful payload while
+        starting/reconnecting. Treating that as a durable snapshot hides the user's whole
+        library until the cache expires, which is much worse than a slightly slower load.
+        """
+        return isinstance(data, dict) and isinstance(data.get("items"), list) and len(data.get("items") or []) > 0
+
+    def discard_cache(kind: str) -> None:
+        try:
+            cache_path(kind).unlink()
+        except OSError:
+            pass
+
     def read_cache(kind: str):
         path = cache_path(kind)
         try:
@@ -29,16 +44,21 @@ def install(app, core) -> None:
             payload = json.loads(path.read_text(encoding="utf-8"))
             saved = float(payload.get("saved_at", 0) or 0)
             data = payload.get("data")
-            if not isinstance(data, dict) or not saved:
+            if not saved or not valid_catalog(data):
+                discard_cache(kind)
                 return None
             age = time.time() - saved
             if age > MAX_STALE_SECONDS:
+                discard_cache(kind)
                 return None
             return {"saved_at": saved, "age": age, "data": data}
         except Exception:
+            discard_cache(kind)
             return None
 
     def write_cache(kind: str, data: dict) -> None:
+        if not valid_catalog(data):
+            raise RuntimeError(f"Refusing to cache empty {kind} catalog")
         cache_dir.mkdir(parents=True, exist_ok=True)
         path = cache_path(kind)
         tmp = path.with_suffix(".tmp")
@@ -50,8 +70,8 @@ def install(app, core) -> None:
         # Call the existing canonical catalog builder directly. force=True refreshes
         # Radarr/Sonarr/Bazarr's own caches before the result is snapshotted.
         data = core.media_catalog(kind=kind, force=True, _=True)
-        if not isinstance(data, dict):
-            raise RuntimeError("Media catalog returned an unexpected payload")
+        if not valid_catalog(data):
+            raise RuntimeError(f"Canonical {kind} catalog returned no media rows")
         write_cache(kind, data)
         return data
 
@@ -65,7 +85,9 @@ def install(app, core) -> None:
             try:
                 refresh(kind)
             except Exception as exc:
-                core.pc.logging.debug("Background %s metadata refresh failed: %s", kind, exc)
+                # Keep the last known-good snapshot. A transient empty/offline response
+                # must never replace working metadata.
+                core.pc.logging.debug("Background %s metadata refresh skipped: %s", kind, exc)
             finally:
                 with _LOCK:
                     _REFRESHING.discard(kind)
@@ -88,18 +110,16 @@ def install(app, core) -> None:
         if cached:
             if cached["age"] >= CACHE_TTL_SECONDS:
                 refresh_background(kind)
-            # Do not mutate the cached catalog shape; existing UI code should not need
-            # to know whether its response was fresh or a persisted snapshot.
             return cached["data"]
 
-        # First-ever request has no snapshot. It must seed once; later requests, browser
-        # reloads, and container restarts can use the persisted copy immediately.
+        # First-ever request has no known-good snapshot. Try to seed it once. If the
+        # canonical builder is transiently empty, return an error so the browser can
+        # fall back to the original endpoint instead of poisoning either cache layer.
         try:
             return refresh(kind)
         except Exception as exc:
             raise HTTPException(502, f"Could not load {kind} metadata: {exc}")
 
-    # Expose a tiny helper for diagnostics/tests without changing normal API payloads.
     core.fast_metadata_cache_status = lambda: {
         kind: ({"cached": True, "age_seconds": round(read_cache(kind)["age"], 1)} if read_cache(kind) else {"cached": False})
         for kind in ("movies", "series")
