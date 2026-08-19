@@ -112,3 +112,229 @@ def _signature(stream: dict) -> tuple[Any, ...]:
         str(tags.get("language") or "").lower(),
         _stream_title(stream).lower(),
     )
+
+
+def _validate_remux(core, src_probe: dict, out_probe: dict, removed_global_index: int, cfg: dict) -> None:
+    src_streams = list(src_probe.get("streams", []) or [])
+    out_streams = list(out_probe.get("streams", []) or [])
+    if len(out_streams) != len(src_streams) - 1:
+        raise RuntimeError(
+            f"Audio removal validation failed: expected {len(src_streams)-1} total streams, found {len(out_streams)}"
+        )
+
+    src_v = [s for s in src_streams if s.get("codec_type") == "video"]
+    out_v = [s for s in out_streams if s.get("codec_type") == "video"]
+    if [s.get("codec_name") for s in src_v] != [s.get("codec_name") for s in out_v]:
+        raise RuntimeError("Audio removal validation failed: video streams changed")
+
+    src_sub = [s for s in src_streams if s.get("codec_type") == "subtitle"]
+    out_sub = [s for s in out_streams if s.get("codec_type") == "subtitle"]
+    if [s.get("codec_name") for s in src_sub] != [s.get("codec_name") for s in out_sub]:
+        raise RuntimeError("Audio removal validation failed: subtitle streams changed")
+
+    expected_audio = [
+        _signature(s) for s in src_streams
+        if s.get("codec_type") == "audio" and int(s.get("index", -1)) != removed_global_index
+    ]
+    actual_audio = [_signature(s) for s in out_streams if s.get("codec_type") == "audio"]
+    if expected_audio != actual_audio:
+        raise RuntimeError("Audio removal validation failed: a protected audio stream changed")
+    if not actual_audio:
+        raise RuntimeError("Audio removal validation failed: no protected/original audio remains")
+
+    before = core.pc.duration_of(src_probe)
+    after = core.pc.duration_of(out_probe)
+    tol = float((cfg.get("safety", {}) or {}).get("duration_tolerance_seconds", 2.0))
+    if before and after and abs(before - after) > tol:
+        raise RuntimeError(f"Audio removal validation failed: duration changed by {abs(before-after):.2f}s")
+
+
+def _record_suppression(core, media: Path, cfg: dict, feature: str, title: str, stream_index: int) -> None:
+    data, entry = _marker_entry(core, media, cfg)
+    files = data.setdefault("files", {})
+    features = entry.setdefault("features", {})
+    now = time.strftime("%Y-%m-%dT%H:%M:%S%z")
+    rec = features.get(feature)
+    if not isinstance(rec, dict):
+        rec = {}
+    rec.update({
+        "complete": True,
+        "signature": "",
+        "suppressed": True,
+        "status": "manually-removed",
+        "removed_at": now,
+        "track": title,
+        "removed_stream_index": int(stream_index),
+    })
+    features[feature] = rec
+    entry.update({
+        "done": True,
+        "fingerprint": core.pc.fingerprint(media),
+        "media_type": core.pc.media_type_for(media, cfg),
+        "version": core.pc.VERSION,
+        "features": features,
+    })
+    files[media.name] = entry
+    core.write_json(core.pc.marker_path(media, cfg), data)
+
+    try:
+        state = core.read_json(core.STATE, {"files": {}})
+        row = state.setdefault("files", {}).setdefault(str(media), {})
+        suppressions = row.setdefault("feature_suppressions", {})
+        suppressions[feature] = {"track": title, "removed_at": now}
+        core.write_json(core.STATE, state)
+    except Exception:
+        pass
+
+
+def _clear_suppression(core, media: Path, cfg: dict, feature: str | None = None) -> list[str]:
+    data, entry = _marker_entry(core, media, cfg)
+    features = entry.get("features") or {}
+    targets = [feature] if feature in {FEATURE_PROFANITY, FEATURE_DIALOGUE} else [FEATURE_PROFANITY, FEATURE_DIALOGUE]
+    changed: list[str] = []
+    for name in targets:
+        rec = features.get(name)
+        if not isinstance(rec, dict) or not rec.get("suppressed"):
+            continue
+        rec["suppressed"] = False
+        rec["complete"] = False
+        rec["status"] = "manual-reprocess-requested"
+        rec.pop("removed_at", None)
+        rec.pop("removed_stream_index", None)
+        changed.append(name)
+    if changed:
+        entry["fingerprint"] = core.pc.fingerprint(media)
+        data.setdefault("files", {})[media.name] = entry
+        core.write_json(core.pc.marker_path(media, cfg), data)
+        try:
+            state = core.read_json(core.STATE, {"files": {}})
+            row = state.setdefault("files", {}).setdefault(str(media), {})
+            suppressions = row.get("feature_suppressions") or {}
+            for name in changed:
+                suppressions.pop(name, None)
+            if suppressions:
+                row["feature_suppressions"] = suppressions
+            else:
+                row.pop("feature_suppressions", None)
+            core.write_json(core.STATE, state)
+        except Exception:
+            pass
+    return changed
+
+
+def install(app, core) -> None:
+    @app.get("/api/audio-tracks")
+    def audio_tracks(path: str = Query(...), _: bool = Depends(core.auth)):
+        media = core.safe_media_path(path)
+        if not media.is_file():
+            raise HTTPException(400, "Choose a media file")
+        cfg = core.pc.load_config(core.CONFIG)
+        try:
+            probe = core.pc.ffprobe(media)
+            rows = _track_rows(core, media, cfg, probe)
+        except Exception as exc:
+            raise HTTPException(500, f"Could not inspect audio tracks: {exc}")
+        return {
+            "ok": True,
+            "path": str(media),
+            "fingerprint": core.pc.fingerprint(media),
+            "audio": rows,
+            "protected_count": sum(1 for x in rows if x["protected"]),
+            "removable_count": sum(1 for x in rows if x["removable"]),
+        }
+
+    @app.post("/api/audio-tracks/remove")
+    async def remove_audio_track(request: Request, _: bool = Depends(core.auth)):
+        body = await request.json()
+        media = core.safe_media_path(str(body.get("path") or ""))
+        try:
+            requested_index = int(body.get("stream_index"))
+        except (TypeError, ValueError):
+            raise HTTPException(400, "A valid audio stream index is required")
+
+        with _LOCK:
+            hb = core.read_json(core.HEARTBEAT, {})
+            current = str(hb.get("current") or "").strip()
+            if current:
+                try:
+                    if Path(current).resolve() == media.resolve():
+                        raise HTTPException(409, "This file is currently processing. Finish or stop that job before removing a track.")
+                except FileNotFoundError:
+                    pass
+
+            cfg = core.pc.load_config(core.CONFIG)
+            src_probe = core.pc.ffprobe(media)
+            rows = _track_rows(core, media, cfg, src_probe)
+            selected = next((x for x in rows if int(x["stream_index"]) == requested_index), None)
+            if not selected:
+                raise HTTPException(404, "Audio track was not found")
+            if not selected.get("removable") or not selected.get("feature"):
+                raise HTTPException(403, "Original and pre-existing audio tracks are protected and cannot be removed")
+            if sum(1 for x in rows if x.get("protected")) < 1:
+                raise HTTPException(409, "Removal refused because no protected original audio track could be verified")
+
+            global_stream = next(
+                (s for s in src_probe.get("streams", []) or [] if int(s.get("index", -1)) == requested_index),
+                None,
+            )
+            if not global_stream or global_stream.get("codec_type") != "audio":
+                raise HTTPException(409, "Selected stream is no longer the same audio track")
+            if _stream_title(global_stream) != str(selected.get("title") or ""):
+                raise HTTPException(409, "Selected audio track changed; reload movie details and try again")
+
+            src_stat = media.stat()
+            temp = media.with_name(media.stem + ".censorarr-remove.tmp" + media.suffix)
+            if temp.exists():
+                try:
+                    temp.unlink()
+                except OSError:
+                    pass
+            try:
+                cmd = [
+                    "ffmpeg", "-hide_banner", "-loglevel", "warning", "-y",
+                    "-i", str(media),
+                    "-map", "0", "-map", f"-0:{requested_index}",
+                    "-map_metadata", "0", "-map_chapters", "0", "-c", "copy",
+                    str(temp),
+                ]
+                core.pc.logging.info(
+                    "Removing Censorarr-generated audio track: %s stream=%s feature=%s",
+                    selected.get("title") or "(untitled)", requested_index, selected.get("feature"),
+                )
+                core.pc.run(cmd)
+                out_probe = core.pc.ffprobe(temp)
+                _validate_remux(core, src_probe, out_probe, requested_index, cfg)
+                if hasattr(core.pc, "preserve_metadata"):
+                    core.pc.preserve_metadata(src_stat, temp, cfg)
+                os.replace(temp, media)
+                _record_suppression(
+                    core, media, cfg, str(selected["feature"]), str(selected.get("title") or ""), requested_index
+                )
+            except HTTPException:
+                raise
+            except Exception as exc:
+                raise HTTPException(500, f"Could not safely remove audio track: {exc}")
+            finally:
+                try:
+                    if temp.exists():
+                        temp.unlink()
+                except OSError:
+                    pass
+
+        return {
+            "ok": True,
+            "path": str(media),
+            "removed": selected,
+            "message": f"Removed {selected.get('title') or 'Censorarr audio track'}. Automation will not recreate it unless you manually Process/Reprocess this media.",
+        }
+
+    @app.post("/api/audio-tracks/unsuppress")
+    async def unsuppress_audio_feature(request: Request, _: bool = Depends(core.auth)):
+        body = await request.json()
+        media = core.safe_media_path(str(body.get("path") or ""))
+        cfg = core.pc.load_config(core.CONFIG)
+        feature = str(body.get("feature") or "").strip() or None
+        if feature is not None and feature not in {FEATURE_PROFANITY, FEATURE_DIALOGUE}:
+            raise HTTPException(400, "Unknown audio feature")
+        changed = _clear_suppression(core, media, cfg, feature)
+        return {"ok": True, "path": str(media), "cleared": changed}
