@@ -58,4 +58,9 @@ def install(pc) -> None:
     pc.pop_manual_job = pop_manual_job_with_context
     pc.remove_manual_job = remove_manual_job_with_context
     pc.rating_decision = rating_decision_manual_aware
+    # Feature-routing shims are installed after this module. Expose the thread-local
+    # manual context on the core module so they can distinguish a user-forced reprocess
+    # from a normal automatic scan without changing the stable process_file signature.
+    pc.manual_processing_active = is_manual_active
+    pc.manual_processing_job = current_job
     pc._family_safe_manual_processing_installed = True
