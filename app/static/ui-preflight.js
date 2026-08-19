@@ -142,3 +142,63 @@
   else{apply();observer.observe(document.body,{childList:true,subtree:true})}
   setTimeout(apply,700);setTimeout(apply,1800);
 })();
+
+/* Instant Movies/TV Shows search. Filter the currently loaded cards locally as each
+   character is typed, while still letting the normal renderMedia() logic update its
+   own counters/status filtering. No Enter key and no metadata/API round trip needed. */
+(() => {
+  const HIDDEN='fs-live-search-hidden';
+
+  function norm(v){return String(v||'').trim().toLocaleLowerCase()}
+
+  function ensureStyle(){
+    if(document.getElementById('fsLiveMediaSearchStyle'))return;
+    const s=document.createElement('style');
+    s.id='fsLiveMediaSearchStyle';
+    s.textContent='.'+HIDDEN+'{display:none!important}';
+    document.head.appendChild(s);
+  }
+
+  function applyFilter(){
+    const input=document.getElementById('mediaSearch');
+    const grid=document.getElementById('mediaGrid');
+    if(!input||!grid)return;
+    const query=norm(input.value);
+    for(const card of grid.querySelectorAll('.media-card')){
+      card.classList.toggle(HIDDEN,!!query&&!norm(card.textContent).includes(query));
+    }
+  }
+
+  function bind(){
+    ensureStyle();
+    const input=document.getElementById('mediaSearch');
+    const grid=document.getElementById('mediaGrid');
+    if(!input||!grid)return false;
+
+    if(input.dataset.fsLiveSearch!=='1'){
+      input.dataset.fsLiveSearch='1';
+      input.setAttribute('autocomplete','off');
+      input.addEventListener('input',()=>{
+        try{if(typeof window.renderMedia==='function')window.renderMedia()}catch(_){}
+        requestAnimationFrame(applyFilter);
+      },{passive:true});
+    }
+
+    if(grid.dataset.fsLiveSearchObserver!=='1'){
+      grid.dataset.fsLiveSearchObserver='1';
+      new MutationObserver(()=>requestAnimationFrame(applyFilter)).observe(grid,{childList:true});
+    }
+
+    applyFilter();
+    return true;
+  }
+
+  function boot(){
+    if(bind())return;
+    let tries=0;
+    const timer=setInterval(()=>{tries++;if(bind()||tries>=40)clearInterval(timer)},250);
+  }
+
+  if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',boot,{once:true});
+  else boot();
+})();
