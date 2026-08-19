@@ -14,6 +14,7 @@ import automation_audio_sources
 import censorarr as pc
 import dialogue_enhancement
 import family_features
+import manual_processing
 import plex_metadata_cache
 
 VERSION = "1.6.8-dev"
@@ -24,6 +25,11 @@ pc.DEFAULT_CONFIG.setdefault("safety", {})["ensure_readable_output"] = True
 # installed before experimental audio features because it only replaces Plex metadata
 # indexing and is independent of the remux/validation hooks below.
 plex_metadata_cache.install(pc)
+
+# Explicit Process/Reprocess requests bypass automation-only content-rating selection.
+# This is installed before main() because the stable worker's handle_one() resolves
+# rating_decision dynamically from the censorarr module globals.
+manual_processing.install(pc)
 
 
 def preserve_processed_media_metadata(src_stat, temp_out: Path, cfg: dict) -> None:
