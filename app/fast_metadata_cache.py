@@ -126,13 +126,13 @@ def install(app, core) -> None:
         id: int = Query(..., ge=0),
         _: bool = Depends(core.auth),
     ):
-        """Return the already-cached movie card as a detail payload without ffprobe.
+        """Return cached movie details without blocking on a media-file probe.
 
         Movie details previously waited for /api/media-detail, which asks Radarr again and
-        probes the large media file before the page can paint. The Audio Tracks manager has
-        its own protected stream-inspection endpoint, so probing here is duplicate work.
-        Use the known-good Movies catalog for the fast first-class detail payload and let
-        audio-track inspection happen independently after the page is visible.
+        probes the large media file before the page can paint. The protected Audio Tracks
+        manager already owns stream inspection, so probing here is duplicate work. Use the
+        known-good Movies catalog, optionally enrich from Radarr's already-warm in-memory
+        cache, and let audio inspection happen independently after the page is visible.
         """
         if kind != "movie":
             # TV details need episode rows, which are not represented by the series catalog.
@@ -156,6 +156,22 @@ def install(app, core) -> None:
             raise HTTPException(404, "Movie not found in the cached Movies catalog")
 
         detail = dict(item)
+
+        # Preserve fields that the compact catalog intentionally omits when Radarr's
+        # in-process cache is already warm. Reading this dict never performs network I/O.
+        try:
+            arr_cache = (getattr(core.integ, "_ARR_CACHE", {}) or {}).get("radarr", {}) or {}
+            arr_item = next(
+                (x for x in (arr_cache.get("items") or []) if int(x.get("id", -1)) == int(id)),
+                None,
+            )
+            if arr_item:
+                detail["runtime"] = arr_item.get("runtime")
+                detail["genres"] = arr_item.get("genres") if isinstance(arr_item.get("genres"), list) else []
+                detail["certification"] = arr_item.get("certification") or detail.get("certification") or ""
+        except Exception:
+            pass
+
         detail.update({
             "kind": "movie",
             "id": int(id),
