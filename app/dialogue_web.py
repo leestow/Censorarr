@@ -10,6 +10,7 @@ import urllib.request
 from fastapi import Depends, HTTPException, Query, Request
 from fastapi.responses import Response
 
+import ai_dialogue
 import automation_audio_sources
 import fast_metadata_cache
 from dialogue_enhancement import DEFAULTS
@@ -67,19 +68,11 @@ def _clean_family_wiki(markdown: str) -> str:
 
 
 def install(app, core) -> None:
-    # Clearly identify the experimental runtime without changing the repository VERSION
-    # file (which remains the stable release version and drives normal release workflows).
     core.VERSION = DEV_VERSION
     core.pc.VERSION = DEV_VERSION
 
-    # Persist the last good Movies/TV catalog in /config. After the first successful
-    # metadata load, cold browser loads and container restarts can paint immediately
-    # while Radarr/Sonarr/Bazarr refresh in the background.
     fast_metadata_cache.install(app, core)
 
-    # A development checkout must never let the stable self-updater replace /app with
-    # a release tarball. Keep update checking/release links available, but make the
-    # install capability report unsupported while this feature branch is running.
     import updater
     updater._platform = lambda: "development"
 
@@ -89,8 +82,6 @@ def install(app, core) -> None:
     core.pc.DEFAULT_CONFIG.setdefault("profanity", {}).setdefault("enabled", True)
     automation_audio_sources.install_defaults(core.pc)
 
-    # Family-safe has one processing behavior. The underlying engine keeps its old config
-    # field for backward compatibility, but this branch pins it off before any worker starts.
     core.pc.DEFAULT_CONFIG["dry_run"] = False
     os.environ.pop("DRY_RUN", None)
 
@@ -113,9 +104,6 @@ def install(app, core) -> None:
         except Exception as exc:
             core.pc.logging.warning("Could not migrate family-safe processing settings: %s", exc)
 
-    # ensure_config runs immediately before the worker supervisor starts. Wrapping it makes
-    # fresh installs safe too: the example config may omit retired/new feature fields, but
-    # the worker receives explicit family-safe defaults before it starts.
     original_ensure_config = core.pc.ensure_config
     if not getattr(original_ensure_config, "_family_safe_single_mode", False):
         def ensure_config_single_mode(path) -> None:
@@ -130,6 +118,11 @@ def install(app, core) -> None:
     @app.get("/api/dialogue-enhancement/settings")
     def get_dialogue_settings(_: bool = Depends(core.auth)):
         return _payload(core.pc.load_config(core.CONFIG))
+
+    @app.get("/api/dialogue-enhancement/ai-status")
+    def get_dialogue_ai_status(_: bool = Depends(core.auth)):
+        cfg = core.pc.load_config(core.CONFIG)
+        return ai_dialogue.worker_capabilities(cfg, timeout=4.0)
 
     @app.post("/api/dialogue-enhancement/settings")
     async def save_dialogue_settings(request: Request, _: bool = Depends(core.auth)):
@@ -159,6 +152,21 @@ def install(app, core) -> None:
             if fallback not in automation_audio_sources.DIALOGUE_FALLBACK_OPTIONS:
                 raise HTTPException(400, "Invalid Dialogue Enhancement source fallback")
             current["source_fallback"] = fallback
+
+        if "method" in body:
+            method = str(body.get("method") or "").strip().lower()
+            if method not in {"ai", "classic"}:
+                raise HTTPException(400, "Dialogue Enhancement method must be ai or classic")
+            current["method"] = method
+        if "ai_model" in body:
+            model = str(body.get("ai_model") or "").strip().lower()
+            if model not in ai_dialogue.AI_MODELS:
+                raise HTTPException(400, "Unsupported AI Dialogue model")
+            current["ai_model"] = model
+        if "ai_fallback_classic" in body:
+            current["ai_fallback_classic"] = bool(body.get("ai_fallback_classic"))
+        if "ai_worker_cpu_fallback" in body:
+            current["ai_worker_cpu_fallback"] = bool(body.get("ai_worker_cpu_fallback"))
 
         title = str(body.get("title", current.get("title", DEFAULTS["title"])) or "").strip()
         if not title:
@@ -198,7 +206,7 @@ def install(app, core) -> None:
         return {
             "ok": True,
             "settings": _payload(raw),
-            "message": "Audio feature and automation-source settings saved. The worker will reload after the current item.",
+            "message": "Audio feature, AI method, and automation-source settings saved. The worker will reload after the current item.",
         }
 
     def wiki_cache_dir():
