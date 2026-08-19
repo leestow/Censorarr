@@ -87,6 +87,23 @@ dialogue_enhancement.install(pc)
 _original_after_success = pc.after_success
 
 
+def _plex_scan_after_analyze_unavailable(path: Path, cfg: dict, reason: str) -> bool:
+    """Ask Plex to scan the containing library when per-item Analyze is unavailable."""
+    media_type = pc.media_type_for(path, cfg)
+    try:
+        if pc.integ.plex_scan_library(cfg, media_type):
+            pc.logging.info(
+                "Plex per-item analyze unavailable (%s); requested %s library scan for %s",
+                reason,
+                "TV" if media_type == "episode" else "Movies",
+                path.name,
+            )
+            return True
+    except Exception as exc:
+        pc.logging.debug("Plex library-scan fallback raised for %s: %s", path.name, exc)
+    return False
+
+
 def after_success_with_plex_analyze(
     path: Path,
     cfg: dict,
@@ -105,8 +122,10 @@ def after_success_with_plex_analyze(
         item, _why = pc.plex_item_for(path, cfg, force_refresh=False)
         rating_key = item.get("ratingKey") if item else None
         if not rating_key:
-            pc.logging.warning("Plex refresh/analyze skipped; no ratingKey found for %s", path.name)
+            if not _plex_scan_after_analyze_unavailable(path, cfg, "no ratingKey"):
+                pc.logging.warning("Plex refresh/analyze skipped; no ratingKey found for %s", path.name)
             return
+
         # The stable completion hook already requests Refresh for CLEAN-track changes.
         # Dialogue-only changes need the same refresh before Analyze.
         if status == "dialogue-applied":
@@ -115,15 +134,25 @@ def after_success_with_plex_analyze(
                 pc.logging.info("Requested Plex refresh for dialogue-enhanced %s", path.name)
             except Exception as exc:
                 pc.logging.warning("Plex refresh after dialogue enhancement failed for %s: %s", path.name, exc)
-        pc.integ.plex_request(
-            cfg,
-            f"/library/metadata/{rating_key}/analyze",
-            method="PUT",
-            timeout=30,
-        )
-        pc.logging.info("Requested Plex analyze for %s", path.name)
+
+        try:
+            # Plex's own clients invoke /analyze as a normal GET action. Some PMS
+            # versions do not expose per-item Analyze at all; those get a library-scan
+            # fallback below so the changed media file is still rediscovered.
+            pc.integ.plex_request(
+                cfg,
+                f"/library/metadata/{rating_key}/analyze",
+                method="GET",
+                timeout=30,
+            )
+            pc.logging.info("Requested Plex analyze for %s", path.name)
+        except Exception as exc:
+            message = str(exc)
+            if "HTTP 404" in message and _plex_scan_after_analyze_unavailable(path, cfg, "HTTP 404"):
+                return
+            pc.logging.warning("Plex analyze after processing failed for %s: %s", path.name, exc)
     except Exception as exc:
-        pc.logging.warning("Plex analyze after processing failed for %s: %s", path.name, exc)
+        pc.logging.warning("Plex post-processing refresh/analyze failed for %s: %s", path.name, exc)
 
 
 pc.after_success = after_success_with_plex_analyze
