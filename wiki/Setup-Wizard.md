@@ -10,7 +10,7 @@ The first-run wizard walks through required media/transcription settings and opt
 
 ![Censorarr Setup Wizard](https://raw.githubusercontent.com/leestow/Censorarr/main/docs/screenshots/setup-wizard.jpg)
 
-## Step 1 — Media folders and mode
+## Step 1 — Media folders
 
 Typical container paths:
 
@@ -21,9 +21,7 @@ TV:     /tv
 
 On native Windows, use real Windows paths such as `D:\Movies`, `E:\TV Shows`, a mapped drive, or a reachable UNC path.
 
-Start with **Dry Run** enabled.
-
-Dry Run still needs read permission to the source media because Censorarr must inspect, extract audio, and transcribe it.
+For a new installation, start with a small test folder or a small media set so you can verify permissions, transcription, CLEAN-track creation, and playback before expanding to the full library.
 
 ## Step 2 — Transcription backend
 
@@ -89,9 +87,9 @@ See [Bazarr & Subtitle Assist](Bazarr-and-Subtitles.md).
 Verify:
 
 - correct media roots
-- Dry Run vs Apply
 - backend selection
 - optional integrations you actually want
+- that your test media is backed up if it is important
 
 Finish setup only after the media permission checks pass.
 
@@ -99,11 +97,11 @@ Finish setup only after the media permission checks pass.
 
 For troubleshooting, do not enable everything at once.
 
-1. Core + local CPU + Dry Run
+1. Core + local CPU + small test media set
 2. Verify file discovery
-3. Verify transcription/detection
+3. Verify transcription/detection and CLEAN-track output
 4. Add GPU Worker
 5. Add Plex
 6. Add Radarr/Sonarr
 7. Add Bazarr
-8. Switch to Apply after testing
+8. Expand to the full library after the test files behave as expected
