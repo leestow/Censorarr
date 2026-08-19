@@ -94,6 +94,27 @@ def install(app, core) -> None:
 
         threading.Thread(target=work, name=f"metadata-refresh-{kind}", daemon=True).start()
 
+    def cached_catalog(kind: str) -> dict:
+        cached = read_cache(kind)
+        data = cached["data"] if cached else None
+        if cached and cached["age"] >= CACHE_TTL_SECONDS:
+            refresh_background(kind)
+
+        if valid_catalog(data):
+            return data
+
+        # If this is the first request after an upgrade/restart, use the canonical builder
+        # once to seed the persistent cache. Its integration layer has its own short-lived
+        # in-memory cache, so this normally remains cheap after the library page has loaded.
+        try:
+            data = core.media_catalog(kind=kind, force=False, _=True)
+            if valid_catalog(data):
+                write_cache(kind, data)
+                return data
+        except Exception as exc:
+            raise HTTPException(502, f"Could not load cached {kind} metadata: {exc}")
+        raise HTTPException(502, f"Could not load cached {kind} metadata")
+
     @app.get("/api/media-catalog-fast")
     def media_catalog_fast(
         kind: str = Query("movies", pattern="^(movies|series)$"),
@@ -126,41 +147,31 @@ def install(app, core) -> None:
         id: int = Query(..., ge=0),
         _: bool = Depends(core.auth),
     ):
-        """Return cached movie details without blocking on a media-file probe.
+        """Return cached movie/show metadata without blocking on expensive file/episode work.
 
-        Movie details previously waited for /api/media-detail, which asks Radarr again and
-        probes the large media file before the page can paint. The protected Audio Tracks
-        manager already owns stream inspection, so probing here is duplicate work. Use the
-        known-good Movies catalog, optionally enrich from Radarr's already-warm in-memory
-        cache, and let audio inspection happen independently after the page is visible.
+        Movie details previously waited for a media-file probe before the page could paint.
+        TV details waited for Sonarr's full episode list. The fast route uses the same
+        persistent catalog already powering the Movies/TV pages. The browser then loads
+        movie audio tracks or TV episodes independently after the page is visible.
         """
-        if kind != "movie":
-            # TV details need episode rows, which are not represented by the series catalog.
-            return core.media_detail(kind=kind, id=id, _=True)
-
-        cached = read_cache("movies")
-        data = cached["data"] if cached else None
-        if cached and cached["age"] >= CACHE_TTL_SECONDS:
-            refresh_background("movies")
-
-        if not valid_catalog(data):
-            try:
-                data = core.media_catalog(kind="movies", force=False, _=True)
-                if valid_catalog(data):
-                    write_cache("movies", data)
-            except Exception as exc:
-                raise HTTPException(502, f"Could not load cached movie details: {exc}")
-
-        item = next((x for x in (data.get("items") or []) if int(x.get("id", -1)) == int(id)), None) if isinstance(data, dict) else None
+        catalog_kind = "movies" if kind == "movie" else "series"
+        data = cached_catalog(catalog_kind)
+        item = next(
+            (x for x in (data.get("items") or []) if int(x.get("id", -1)) == int(id)),
+            None,
+        )
         if not item:
-            raise HTTPException(404, "Movie not found in the cached Movies catalog")
+            label = "Movie" if kind == "movie" else "TV show"
+            raise HTTPException(404, f"{label} not found in the cached {catalog_kind.title()} catalog")
 
         detail = dict(item)
 
-        # Preserve fields that the compact catalog intentionally omits when Radarr's
-        # in-process cache is already warm. Reading this dict never performs network I/O.
+        # Preserve fields intentionally omitted from the compact catalog when the matching
+        # Arr manager's in-process cache is already warm. This reads memory only and never
+        # performs network I/O.
+        arr_name = "radarr" if kind == "movie" else "sonarr"
         try:
-            arr_cache = (getattr(core.integ, "_ARR_CACHE", {}) or {}).get("radarr", {}) or {}
+            arr_cache = (getattr(core.integ, "_ARR_CACHE", {}) or {}).get(arr_name, {}) or {}
             arr_item = next(
                 (x for x in (arr_cache.get("items") or []) if int(x.get("id", -1)) == int(id)),
                 None,
@@ -169,18 +180,44 @@ def install(app, core) -> None:
                 detail["runtime"] = arr_item.get("runtime")
                 detail["genres"] = arr_item.get("genres") if isinstance(arr_item.get("genres"), list) else []
                 detail["certification"] = arr_item.get("certification") or detail.get("certification") or ""
+                if kind == "series":
+                    detail["network"] = arr_item.get("network") or detail.get("network") or ""
+                    detail["status"] = arr_item.get("status") or detail.get("status") or ""
         except Exception:
             pass
 
+        if kind == "movie":
+            detail.update({
+                "kind": "movie",
+                "id": int(id),
+                "source": detail.get("source") or data.get("source") or "catalog-cache",
+                "runtime": detail.get("runtime"),
+                "genres": detail.get("genres") if isinstance(detail.get("genres"), list) else [],
+                "report": detail.get("report"),
+                "tracks": {"audio": [], "subtitles": []},
+                "tracks_deferred": True,
+                "metadata_cached": True,
+            })
+            return detail
+
+        total = int(detail.get("episode_file_count") or detail.get("episode_count") or 0)
         detail.update({
-            "kind": "movie",
+            "kind": "series",
             "id": int(id),
             "source": detail.get("source") or data.get("source") or "catalog-cache",
             "runtime": detail.get("runtime"),
+            "certification": detail.get("certification") or "",
             "genres": detail.get("genres") if isinstance(detail.get("genres"), list) else [],
-            "report": detail.get("report"),
-            "tracks": {"audio": [], "subtitles": []},
-            "tracks_deferred": True,
+            "network": detail.get("network") or "",
+            "status": detail.get("status") or "",
+            "episodes": [],
+            "summary": {
+                "cleaned": int(detail.get("censorarr_cleaned") or 0),
+                "no_profanity": int(detail.get("censorarr_no_profanity") or 0),
+                "failed": int(detail.get("censorarr_failed") or 0),
+                "total": total,
+            },
+            "episodes_deferred": True,
             "metadata_cached": True,
         })
         return detail
