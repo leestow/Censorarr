@@ -27,17 +27,11 @@ Likewise:
 
 becomes `/tv` inside Censorarr.
 
-## Read vs write requirements
+## Read and write requirements
 
-### Dry Run
+Censorarr requires read/traverse access so it can inspect media with `ffprobe`, extract audio, and transcribe dialogue.
 
-Requires **read/traverse** access to the media.
-
-Censorarr must still run `ffprobe`, extract audio, and transcribe.
-
-### Apply mode
-
-Requires read/traverse **and write/replace** access to the media path.
+It also requires write/replace access to the media location so it can create, validate, and install the processed media file containing the CLEAN audio track.
 
 ## PUID / PGID
 
