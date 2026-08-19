@@ -264,4 +264,10 @@ def install(app, core) -> None:
         usability = core.STATIC / "ui-usability-pass.js"
         if usability.is_file():
             content += "\n\n/* Family-safe usability pass */\n" + usability.read_text(encoding="utf-8")
+        persistent_cache = core.STATIC / "ui-persistent-metadata-cache.js"
+        if persistent_cache.is_file():
+            content += "\n\n/* Persistent stale-while-revalidate media metadata cache */\n" + persistent_cache.read_text(encoding="utf-8")
+        overview_controls = core.STATIC / "ui-overview-controls.js"
+        if overview_controls.is_file():
+            content += "\n\n/* Overview stop/pause controls */\n" + overview_controls.read_text(encoding="utf-8")
         return Response(content, media_type="application/javascript", headers={"Cache-Control": "no-cache"})
