@@ -6,8 +6,7 @@ Use this guide for a normal Linux Docker host, VM, or server.
 
 - Docker Engine
 - Docker Compose v2 (`docker compose`)
-- Read access to your media
-- Write access to media if Apply mode will be used
+- Read/write access to your media
 - Enough CPU/RAM for local Whisper, or a reachable GPU Worker
 
 ## Install
