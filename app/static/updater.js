@@ -1,257 +1,68 @@
 (() => {
-  const state = { dismissed: sessionStorage.getItem('censorarr-update-dismissed') || '' };
-
-  async function request(path, options) {
-    const response = await fetch(path, {
-      credentials: 'same-origin',
-      headers: { 'Content-Type': 'application/json' },
-      ...(options || {}),
-    });
-    let data = {};
-    try { data = await response.json(); } catch (_) {}
-    if (!response.ok) throw new Error(data.detail || data.error || `HTTP ${response.status}`);
+  async function request(path, options={}) {
+    const response = await fetch(path, {credentials:'same-origin',headers:{'Content-Type':'application/json'},...options});
+    let data={}; try{data=await response.json()}catch(_){ }
+    if(!response.ok) throw new Error(data.detail||data.error||`HTTP ${response.status}`);
     return data;
   }
-
-  function removeBanner() {
-    const old = document.getElementById('censorarr-update-banner');
-    if (old) old.remove();
+  async function installNow(status, button) {
+    if(!confirm(`Install Censorarr ${status.latest_version} now?\n\nCensorarr will restart after the update.`)) return;
+    if(button){button.disabled=true;button.textContent='Installing…'}
+    try{
+      const result=await request('/api/update/install',{method:'POST',body:'{}'});
+      if(!result.updated){if(button)button.textContent='Already current';return}
+      let tries=0; const poll=setInterval(async()=>{tries++;try{const h=await request('/api/health');if(String(h.version||'')===String(result.to||'')){clearInterval(poll);location.reload()}}catch(_){ }if(tries>90)clearInterval(poll)},2000);
+    }catch(err){if(button){button.disabled=false;button.textContent='Update now'}alert(`Censorarr update failed:\n\n${err.message||err}`)}
   }
-
-  function button(text, primary = false) {
-    const el = document.createElement('button');
-    el.textContent = text;
-    el.style.cssText = [
-      'border:1px solid rgba(255,255,255,.32)',
-      'border-radius:8px',
-      'padding:7px 11px',
-      'font-weight:700',
-      'cursor:pointer',
-      primary ? 'background:#fff;color:#151515' : 'background:rgba(255,255,255,.10);color:#fff',
-    ].join(';');
-    return el;
+  function renderSettings(status){
+    const page=document.querySelector('.settings-page[data-settings="backup"]'); if(!page||!status)return;
+    let section=document.getElementById('censorarrUpdateSettings');
+    if(!section){section=document.createElement('div');section.className='section';section.id='censorarrUpdateSettings';section.innerHTML='<h3>Updates</h3><div class="statline"><span>Current version</span><b id="censorarrUpdateCurrent">—</b></div><div class="statline"><span>Latest stable release</span><b id="censorarrUpdateLatest">—</b></div><div class="toolbar" style="margin-top:12px"><button id="censorarrCheckUpdate">Check for updates</button><button class="good hidden" id="censorarrInstallUpdate">Update now</button><button class="hidden" id="censorarrReleaseNotes">Release notes</button></div><div class="footer-note" id="censorarrUpdateState"></div>';page.appendChild(section);document.getElementById('censorarrCheckUpdate').onclick=()=>check(true)}
+    document.getElementById('censorarrUpdateCurrent').textContent=status.current_version||'Unknown';
+    document.getElementById('censorarrUpdateLatest').textContent=status.latest_version||status.current_version||'Unknown';
+    const install=document.getElementById('censorarrInstallUpdate'),notes=document.getElementById('censorarrReleaseNotes'),msg=document.getElementById('censorarrUpdateState');
+    install.classList.toggle('hidden',!(status.update_available&&status.install?.supported));install.onclick=()=>installNow(status,install);
+    notes.classList.toggle('hidden',!status.release_url);notes.onclick=()=>status.release_url&&window.open(status.release_url,'_blank','noopener');
+    msg.textContent=!status.ok?`Update check failed: ${status.error||'unknown error'}`:status.update_available?`Censorarr ${status.latest_version} is available.`:'Censorarr is up to date.';
   }
-
-  async function saveAutoInstall(enabled, checkbox) {
-    if (checkbox) checkbox.disabled = true;
-    try {
-      const result = await request('/api/update/preferences', {
-        method: 'POST',
-        body: JSON.stringify({ auto_install: !!enabled }),
-      });
-      if (checkbox) checkbox.checked = !!result.auto_install;
-      return !!result.auto_install;
-    } catch (err) {
-      if (checkbox) checkbox.checked = !enabled;
-      throw err;
-    } finally {
-      if (checkbox) checkbox.disabled = false;
-    }
+  function showBanner(status){
+    document.getElementById('censorarr-update-banner')?.remove(); if(!status?.update_available)return;
+    const banner=document.createElement('div');banner.id='censorarr-update-banner';banner.style.cssText='position:sticky;top:0;z-index:99999;display:flex;gap:10px;align-items:center;justify-content:center;flex-wrap:wrap;padding:10px 14px;background:#122733;color:#fff;border-bottom:1px solid #285064;font:14px system-ui';banner.innerHTML=`<strong>Censorarr ${status.latest_version} is available.</strong><span>You are running ${status.current_version}.</span>`;
+    if(status.install?.supported){const b=document.createElement('button');b.textContent='Update now';b.onclick=()=>installNow(status,b);banner.appendChild(b)}
+    if(status.release_url){const b=document.createElement('button');b.textContent='Release notes';b.onclick=()=>window.open(status.release_url,'_blank','noopener');banner.appendChild(b)}
+    const later=document.createElement('button');later.textContent='Later';later.onclick=()=>banner.remove();banner.appendChild(later);document.body.prepend(banner);
   }
-
-  async function installNow(status, control, messageTarget) {
-    if (!confirm(`Install Censorarr ${status.latest_version} now?\n\nThe Docker/Synology app source will be backed up and the container will restart automatically.`)) return;
-    if (control) {
-      control.disabled = true;
-      control.textContent = 'Installing…';
-    }
-    try {
-      const result = await request('/api/update/install', { method: 'POST', body: '{}' });
-      if (!result.updated) {
-        if (control) control.textContent = 'Already current';
-        return;
-      }
-      if (messageTarget) messageTarget.textContent = `Update installed. Restarting Censorarr…`;
-      let tries = 0;
-      const poll = setInterval(async () => {
-        tries += 1;
-        try {
-          const health = await request('/api/health');
-          if (String(health.version || '') === String(result.to || '')) {
-            clearInterval(poll);
-            location.reload();
-          }
-        } catch (_) {}
-        if (tries > 90) clearInterval(poll);
-      }, 2000);
-    } catch (err) {
-      if (control) {
-        control.disabled = false;
-        control.textContent = 'Update now';
-      }
-      alert(`Censorarr update failed:\n\n${err.message || err}`);
-    }
-  }
-
-  function renderSettings(status) {
-    const page = document.querySelector('.settings-page[data-settings="backup"]');
-    if (!page || !status) return;
-
-    let section = document.getElementById('censorarrUpdateSettings');
-    if (!section) {
-      section = document.createElement('div');
-      section.className = 'section';
-      section.id = 'censorarrUpdateSettings';
-      section.innerHTML = `
-        <h3>Updates</h3>
-        <div class="statline"><span>Current version</span><b id="censorarrUpdateCurrent">—</b></div>
-        <div class="statline"><span>Latest stable release</span><b id="censorarrUpdateLatest">—</b></div>
-        <div class="field" style="margin-top:12px"><label class="checkrow"><input id="censorarrAutoUpdate" type="checkbox"> Automatically install safe updates</label><div class="footer-note" id="censorarrAutoUpdateHelp"></div></div>
-        <div class="toolbar"><button id="censorarrCheckUpdate">Check for updates</button><button class="good hidden" id="censorarrInstallUpdate">Update now</button><button class="hidden" id="censorarrReleaseNotes">Release notes</button></div>
-        <div class="footer-note" id="censorarrUpdateState"></div>
-      `;
-      page.appendChild(section);
-      document.getElementById('censorarrCheckUpdate').onclick = () => check(true);
-    }
-
-    const current = document.getElementById('censorarrUpdateCurrent');
-    const latest = document.getElementById('censorarrUpdateLatest');
-    const auto = document.getElementById('censorarrAutoUpdate');
-    const autoHelp = document.getElementById('censorarrAutoUpdateHelp');
-    const installButton = document.getElementById('censorarrInstallUpdate');
-    const notesButton = document.getElementById('censorarrReleaseNotes');
-    const message = document.getElementById('censorarrUpdateState');
-
-    current.textContent = status.current_version || 'Unknown';
-    latest.textContent = status.latest_version || (status.ok ? status.current_version || 'Unknown' : 'Unavailable');
-    auto.checked = !!status.auto_install_enabled;
-
-    const docker = status.platform === 'docker';
-    auto.disabled = !docker;
-    autoHelp.textContent = docker
-      ? 'When enabled, Censorarr checks periodically and installs verified source-only updates once the media worker is idle. Updates that require a container rebuild are never installed automatically.'
-      : status.platform === 'development'
-        ? 'Automatic stable updates are disabled while the experimental development branch is running.'
-        : 'Automatic installer replacement is not yet enabled on this platform; Censorarr will still alert you when a release is available.';
-    auto.onchange = async () => {
-      try {
-        await saveAutoInstall(auto.checked, auto);
-      } catch (err) {
-        alert(`Could not save update preference:\n\n${err.message || err}`);
-      }
-    };
-
-    installButton.classList.toggle('hidden', !(status.update_available && status.install && status.install.supported));
-    installButton.onclick = () => installNow(status, installButton, message);
-
-    notesButton.classList.toggle('hidden', !status.release_url);
-    notesButton.onclick = () => status.release_url && window.open(status.release_url, '_blank', 'noopener');
-
-    if (!status.ok) {
-      message.textContent = `Update check failed: ${status.error || 'unknown error'}`;
-    } else if (!status.update_available) {
-      message.textContent = 'Censorarr is up to date.';
-    } else if (status.install && status.install.supported) {
-      message.textContent = `Censorarr ${status.latest_version} is available and can be installed safely from this screen.`;
-    } else {
-      message.textContent = `Censorarr ${status.latest_version} is available. ${status.install?.reason || 'Manual update required.'}`;
-    }
-  }
-
-  function show(status) {
-    renderSettings(status);
-    if (!status || !status.update_available) {
-      removeBanner();
-      return;
-    }
-    if (state.dismissed === String(status.latest_version || '')) return;
-    removeBanner();
-
-    const banner = document.createElement('div');
-    banner.id = 'censorarr-update-banner';
-    banner.style.cssText = [
-      'position:sticky', 'top:0', 'z-index:99999', 'display:flex', 'gap:12px',
-      'align-items:center', 'justify-content:center', 'flex-wrap:wrap',
-      'padding:11px 14px', 'background:#222', 'color:#fff',
-      'border-bottom:1px solid rgba(255,255,255,.18)', 'box-shadow:0 4px 16px rgba(0,0,0,.25)',
-      'font-family:system-ui,-apple-system,Segoe UI,sans-serif', 'font-size:14px'
-    ].join(';');
-
-    const text = document.createElement('span');
-    const strong = document.createElement('strong');
-    strong.textContent = `Censorarr ${String(status.latest_version || '')} is available.`;
-    text.append(strong, document.createTextNode(` You are running ${String(status.current_version || '')}.`));
-    banner.appendChild(text);
-
-    const install = status.install || {};
-    if (install.supported) {
-      const now = button('Update now', true);
-      now.onclick = () => installNow(status, now, text);
-      banner.appendChild(now);
-    } else {
-      const reason = document.createElement('span');
-      reason.textContent = install.reason || 'Manual update required.';
-      reason.style.opacity = '.78';
-      reason.style.fontSize = '12px';
-      banner.appendChild(reason);
-    }
-
-    if (status.release_url) {
-      const notes = button('Release notes');
-      notes.onclick = () => window.open(status.release_url, '_blank', 'noopener');
-      banner.appendChild(notes);
-    }
-
-    if (status.platform === 'docker') {
-      const label = document.createElement('label');
-      label.style.cssText = 'display:flex;align-items:center;gap:6px;cursor:pointer;font-size:12px;white-space:nowrap';
-      const auto = document.createElement('input');
-      auto.type = 'checkbox';
-      auto.checked = !!status.auto_install_enabled;
-      auto.onchange = async () => {
-        try {
-          const value = await saveAutoInstall(auto.checked, auto);
-          const settingsAuto = document.getElementById('censorarrAutoUpdate');
-          if (settingsAuto) settingsAuto.checked = value;
-        } catch (err) {
-          alert(`Could not save update preference:\n\n${err.message || err}`);
-        }
-      };
-      label.append(auto, document.createTextNode('Auto-install safe updates'));
-      banner.appendChild(label);
-    }
-
-    const later = button('Later');
-    later.onclick = () => {
-      state.dismissed = String(status.latest_version || '');
-      sessionStorage.setItem('censorarr-update-dismissed', state.dismissed);
-      removeBanner();
-    };
-    banner.appendChild(later);
-
-    document.body.prepend(banner);
-  }
-
-  async function check(force = false) {
-    try {
-      const status = await request(`/api/update/status${force ? '?force=true' : ''}`);
-      show(status);
-      return status;
-    } catch (err) {
-      console.debug('Censorarr update check failed:', err);
-      const fallback = { ok: false, error: String(err.message || err), current_version: 'Unknown', platform: 'unknown' };
-      renderSettings(fallback);
-      return fallback;
-    }
-  }
-
-  window.CensorarrUpdater = { check };
-  if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', () => setTimeout(() => check(false), 1200));
-  } else {
-    setTimeout(() => check(false), 1200);
-  }
+  async function check(force=false){try{const s=await request(`/api/update/status${force?'?force=true':''}`);renderSettings(s);showBanner(s);return s}catch(err){const s={ok:false,error:String(err.message||err),current_version:'Unknown'};renderSettings(s);return s}}
+  window.CensorarrUpdater={check};
+  if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',()=>setTimeout(()=>check(false),1200));else setTimeout(()=>check(false),1200);
 })();
 
 (() => {
-  const load = () => {
-    if (document.querySelector('script[data-family-dashboard]')) return;
-    const script = document.createElement('script');
-    script.src = '/family-dashboard.js?v=1';
-    script.defer = true;
-    script.dataset.familyDashboard = '1';
-    document.head.appendChild(script);
-  };
-  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', load, { once:true });
-  else load();
+  const TIPS=['Enable Dry Run on new libraries to preview changes before applying.','Use Review Mode when you want to approve detections before a CLEAN track is created.','A remote GPU worker can speed up Whisper transcription without moving Censorarr off your NAS.','Bazarr is optional: Censorarr can still use embedded or local text subtitles when available.'];
+  let tipIndex=0,mediaCache={movies:[],series:[]};
+  const q=(s,r=document)=>r.querySelector(s),qa=(s,r=document)=>[...r.querySelectorAll(s)],txt=id=>document.getElementById(id)?.textContent?.trim()||'—';
+  const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  const good=s=>['applied','clean-exists','skipped-clean-exists','no-detections'].includes(String(s||'')),waiting=s=>['waiting-subtitle','waiting-rating'].includes(String(s||'')),review=s=>String(s||'')==='awaiting-review';
+  function injectStyles(){if(document.getElementById('familyDashboardStyles'))return;const s=document.createElement('style');s.id='familyDashboardStyles';s.textContent=`
+html{background:#07131f}html[data-theme=light]{--bg:#07131f;--panel:#0d1d2b;--panel2:#112638;--panel3:#173249;--text:#edf7ff;--muted:#8fa9bd;--line:#1b3b50;--accent:#25d48a;--accent2:#238bf3;--warn:#ffad33;--bad:#ff5f69}body{background:radial-gradient(circle at 72% -10%,rgba(16,166,145,.16),transparent 30%),#07131f;color:#edf7ff}.app-shell{grid-template-columns:250px minmax(0,1fr)!important}.sidebar{background:linear-gradient(180deg,#072333 0%,#07344a 52%,#082b42 100%)!important;border-right:1px solid #14516b;padding:14px 12px!important}.sidebar-brand{height:70px!important;background:transparent!important;border:0!important;margin:0 4px 14px!important;padding:4px!important}.sidebar-brand img{max-height:58px!important;object-position:left center!important}.side-nav{gap:2px!important}.nav-section{color:#7fa8ba!important;padding:17px 10px 7px!important}.side-nav .nav-item,.nav-group-btn{border:0!important;background:transparent!important;color:#d8e8f2!important;border-radius:7px!important}.side-nav .nav-item:hover,.nav-group-btn:hover{background:rgba(30,151,177,.13)!important}.side-nav .nav-item.active{background:linear-gradient(90deg,#0e8378,#126a86)!important;color:#fff!important;box-shadow:inset 3px 0 0 #36e0ca!important}.nav-icon{color:#62d9ff!important}.nav-count{background:#143e55!important;color:#e3f5ff!important}.nav-group .nav-item.sub{padding-left:44px!important}.sidebar-footer{border-top:1px solid rgba(113,196,222,.13);margin-top:auto!important}.appbar{height:72px!important;background:linear-gradient(90deg,#073d43 0%,#07554d 45%,#087769 100%)!important;border-bottom:1px solid #13847a!important;padding:0 18px!important;box-shadow:0 8px 28px rgba(0,0,0,.18)}.appbar>div:first-child{display:none!important}.appbar .right{width:100%!important;display:flex!important;gap:10px!important}.fs-search{height:42px;min-width:380px;flex:1;max-width:640px;background:rgba(3,32,38,.48)!important;border:1px solid rgba(102,234,215,.26)!important;color:#eafcff!important;border-radius:8px!important;padding:0 14px!important}.fs-top-spacer{flex:1}.fs-topbtn{height:40px!important;padding:0 14px!important;border:1px solid rgba(137,239,220,.19)!important;background:rgba(4,37,43,.35)!important;color:#edfdfb!important;border-radius:7px!important;font-weight:700}.fs-topbtn.primary{background:rgba(19,167,136,.42)!important;border-color:#1bb897!important}.fs-update{border-color:#21c58f!important;color:#8df6c6!important}.wrap{padding:12px 18px 22px!important}.pane#dashboardPane>.cards,.pane#dashboardPane>.grid{display:none!important}.fs-dashboard{display:grid;gap:12px}.fs-kpis{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:10px}.fs-kpi{min-height:104px;background:linear-gradient(145deg,#0d1c2a,#102436);border:1px solid #173c52;border-radius:8px;padding:14px;display:grid;grid-template-columns:48px 1fr;gap:12px;align-items:center}.fs-kpi-icon{width:46px;height:46px;border-radius:50%;display:grid;place-items:center;font-size:21px;font-weight:900;background:#133c45;color:#4ee5b4}.fs-kpi:nth-child(2) .fs-kpi-icon{background:#321b5a;color:#a47cff}.fs-kpi:nth-child(3) .fs-kpi-icon{background:#102f68;color:#55a8ff}.fs-kpi:nth-child(4) .fs-kpi-icon{background:#123f42;color:#54e0d2}.fs-kpi:nth-child(5) .fs-kpi-icon{background:#173b2b;color:#6ce494}.fs-kpi-label{font-size:12px;color:#a9c0cf}.fs-kpi-value{font-size:25px;font-weight:800;line-height:1.15;margin:3px 0}.fs-kpi-sub{font-size:11px;color:#39dd8b}.fs-main-grid{display:grid;grid-template-columns:minmax(0,1.75fr) minmax(360px,.82fr);gap:12px}.fs-media-panel,.fs-side-card{background:#0c1c2a;border:1px solid #17384d;border-radius:8px;overflow:hidden}.fs-media-section{padding:12px 12px 10px;border-bottom:1px solid #17384d}.fs-media-section:last-child{border-bottom:0}.fs-section-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:10px}.fs-section-head h2{font-size:16px;margin:0}.fs-link{color:#55b8ff;font-size:12px;cursor:pointer}.fs-row{display:grid;grid-template-columns:repeat(6,minmax(98px,1fr));gap:10px}.fs-row.small{grid-template-columns:repeat(6,minmax(78px,1fr))}.fs-poster-card{min-width:0;cursor:pointer}.fs-poster{position:relative;aspect-ratio:2/3;border-radius:6px;overflow:hidden;background:linear-gradient(145deg,#173044,#0a1722);box-shadow:0 4px 16px rgba(0,0,0,.22)}.fs-poster img{width:100%;height:100%;object-fit:cover;display:block}.fs-poster-placeholder{width:100%;height:100%;display:grid;place-items:center;font-size:30px;color:#4f7388}.fs-chip{position:absolute;top:7px;left:7px;padding:3px 7px;border-radius:5px;font-size:10px;font-weight:800;background:#1aaa68;color:white}.fs-chip.wait{background:#d88612}.fs-chip.review{background:#7b47d9}.fs-card-title{margin-top:7px;font-size:12px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.fs-card-sub{font-size:10px;color:#8199aa;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.fs-progress-ring{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:68px;height:68px;border-radius:50%;display:grid;place-items:center;background:conic-gradient(#35d98e var(--p),#277cff var(--p),rgba(2,12,18,.72) 0);box-shadow:0 0 0 5px rgba(4,18,24,.45)}.fs-progress-ring::after{content:'';position:absolute;inset:6px;background:#07131fdd;border-radius:50%}.fs-progress-ring span{position:relative;z-index:1;font-weight:800;font-size:14px}.fs-side{display:grid;gap:10px;align-content:start}.fs-side-card{padding:13px}.fs-side-title{display:flex;justify-content:space-between;align-items:center;margin-bottom:10px}.fs-side-title h2{margin:0;font-size:16px}.fs-worker-grid{display:grid;grid-template-columns:1fr 1fr;gap:5px 20px}.fs-stat{display:flex;justify-content:space-between;gap:12px;padding:7px 0;border-bottom:1px solid #17384d;font-size:12px}.fs-stat b{font-weight:700}.fs-online{color:#50e899}.fs-meter{height:6px;background:#173247;border-radius:999px;overflow:hidden;margin:5px 0 8px}.fs-meter>span{display:block;height:100%;background:linear-gradient(90deg,#18d189,#52e8bb);border-radius:999px}.fs-integrations{display:grid;grid-template-columns:1fr 1fr;gap:7px}.fs-int{border:1px solid #17384d;border-radius:6px;padding:9px 10px;display:flex;align-items:center;gap:8px;background:#0e2030}.fs-int-icon{width:24px;height:24px;border-radius:50%;display:grid;place-items:center;background:#122d3f;font-weight:900;color:#7dcaff}.fs-int-name{font-size:12px;font-weight:700}.fs-int-state{font-size:10px;color:#42da8a}.fs-history{width:100%;border-collapse:collapse}.fs-history th,.fs-history td{padding:7px 5px;border-bottom:1px solid #17384d;font-size:11px}.fs-history th{color:#829bab;text-transform:none;letter-spacing:0;background:transparent;position:static}.fs-success{display:inline-block;background:#143d2a;color:#65e99c;padding:2px 7px;border-radius:4px}.fs-tipbar{height:52px;background:#0c1d2c;border:1px solid #17384d;border-radius:8px;display:flex;align-items:center;gap:10px;padding:0 16px}.fs-tiptext{font-size:12px;flex:1}.fs-tipdots{display:flex;gap:8px}.fs-tipdot{width:8px;height:8px;border-radius:50%;background:#607788}.fs-tipdot.active{background:#24d18a}.fs-tipnav{border:0!important;background:transparent!important;padding:4px 7px!important;color:#cbe1ee!important}.fs-legacy{display:none!important}.fs-sidebar-collapse{position:absolute;top:21px;right:-41px;z-index:40;width:32px;height:32px;border:1px solid #1b5267!important;border-radius:7px!important;background:#09222f!important;color:#dff7ff!important}.app-shell.fs-collapsed{grid-template-columns:72px minmax(0,1fr)!important}.app-shell.fs-collapsed .sidebar{padding-left:8px!important;padding-right:8px!important}.app-shell.fs-collapsed .sidebar-brand img{object-fit:cover;object-position:left;width:48px!important;max-width:48px!important}.app-shell.fs-collapsed .nav-item span:not(.nav-icon):not(.nav-count),.app-shell.fs-collapsed .nav-group-btn span:not(.nav-icon),.app-shell.fs-collapsed .nav-section,.app-shell.fs-collapsed .sidebar-footer{display:none!important}.app-shell.fs-collapsed .side-nav .nav-item,.app-shell.fs-collapsed .nav-group-btn{grid-template-columns:1fr!important;justify-items:center!important;padding:10px 4px!important}.app-shell.fs-collapsed .nav-icon{font-size:18px}.app-shell.fs-collapsed .nav-group .nav-item.sub{padding-left:4px!important}.app-shell.fs-collapsed .nav-group .nav-item.sub::before{content:'•';color:#5ccfea}@media(max-width:1200px){.fs-kpis{grid-template-columns:repeat(3,1fr)}.fs-main-grid{grid-template-columns:1fr}.fs-row{grid-template-columns:repeat(4,1fr)}}@media(max-width:760px){.app-shell{display:block!important}.sidebar{position:relative!important;height:auto!important}.fs-sidebar-collapse{display:none}.appbar{position:relative!important}.fs-search{min-width:0!important}.fs-kpis{grid-template-columns:1fr 1fr}.fs-row,.fs-row.small{grid-template-columns:repeat(2,1fr)}}`;
+    document.head.appendChild(s)}
+  function topbar(){const a=q('.appbar'),r=a&&q('.right',a);if(!r)return;r.innerHTML='<input id="fsGlobalSearch" class="fs-search" type="text" placeholder="Search movies, shows, artists, albums..."><span class="fs-top-spacer"></span><button class="fs-topbtn primary" id="fsScanBtn">◉ &nbsp; Scan Library</button><button class="fs-topbtn" id="fsSettingsBtn">⚙ &nbsp; Settings</button><button class="fs-topbtn" id="fsHelpBtn">? &nbsp; Help</button><button class="fs-topbtn fs-update" id="fsUpdateBtn">⇩ &nbsp; Checking…</button>';q('#fsScanBtn').onclick=()=>window.scanNow?.();q('#fsSettingsBtn').onclick=()=>window.openSettingsNav?.('general',q('.side-nav .nav-item'));q('#fsHelpBtn').onclick=()=>window.openSetupWizard?.(false);q('#fsUpdateBtn').onclick=()=>window.CensorarrUpdater?.check?.(true);q('#fsGlobalSearch').addEventListener('keydown',e=>{if(e.key!=='Enter')return;const v=e.currentTarget.value.trim(),b=qa('.side-nav button').find(x=>x.textContent.trim().startsWith('Movies'));window.openMediaNav?.('movies',b);setTimeout(()=>{const i=document.getElementById('mediaSearch');if(i){i.value=v;window.renderMedia?.();i.focus()}},80)})}
+  const nb=(l,i,a,c='')=>`<button class="nav-item" data-fs-action="${a}"><span class="nav-icon">${i}</span><span>${l}</span>${c?`<span class="nav-count" id="${c}"></span>`:''}</button>`;
+  function sidebar(){const n=q('.side-nav'),s=q('.sidebar'),sh=q('.app-shell');if(!n||!s||!sh)return;n.innerHTML=`${nb('Overview','⌂','dashboard')}<div class="nav-section">Media</div>${nb('All Media','▦','all-media')}${nb('Movies','▤','movies')}${nb('TV Shows','▣','series')}<div class="nav-section">Processing</div>${nb('In Progress','◴','in-progress','fsCountProgress')}${nb('Waiting','◷','waiting','fsCountWaiting')}${nb('Needs Review','▧','review','fsCountReview')}${nb('Completed','☑','completed')}${nb('Failed','⊗','failed','fsCountFailed')}${nb('Dry Runs','♙','dry-run')}<div class="nav-section">System</div><div class="nav-group open" id="fsSettingsGroup"><button type="button" class="nav-group-btn"><span class="nav-icon">⚙</span><span>Settings</span><span class="chev">▼</span></button><button class="nav-item sub" data-fs-action="queue"><span>Queue</span><span class="nav-count" id="fsCountQueue"></span></button><button class="nav-item sub" data-fs-action="workers"><span>Workers</span></button><button class="nav-item sub" data-fs-action="integrations"><span>Integrations</span></button><button class="nav-item sub" data-fs-action="health"><span>System Health</span></button></div>`;q('#fsSettingsGroup .nav-group-btn').onclick=()=>q('#fsSettingsGroup').classList.toggle('open');n.addEventListener('click',e=>{const b=e.target.closest('[data-fs-action]');if(!b)return;qa('.side-nav .nav-item').forEach(x=>x.classList.remove('active'));b.classList.add('active');act(b.dataset.fsAction,b)});q('[data-fs-action="dashboard"]')?.classList.add('active');const c=document.createElement('button');c.className='fs-sidebar-collapse';c.textContent='«';c.onclick=()=>{const z=sh.classList.toggle('fs-collapsed');c.textContent=z?'»':'«';localStorage.setItem('censorarr-sidebar-collapsed',z?'1':'0')};s.appendChild(c);if(localStorage.getItem('censorarr-sidebar-collapsed')==='1'){sh.classList.add('fs-collapsed');c.textContent='»'}}
+  function hf(v,b){const o=qa('.side-nav button').find(x=>x.dataset.title==='History');window.tab?.('library',o||b);setTimeout(()=>{const s=document.getElementById('historyFilter');if(s){s.value=v;window.refreshHistory?.()}},40)}
+  function act(a,b){if(a==='dashboard')return window.tab?.('dashboard',b);if(a==='all-media'||a==='movies')return window.openMediaNav?.('movies',b);if(a==='series')return window.openMediaNav?.('series',b);if(a==='review')return window.tab?.('reviews',b);if(a==='failed')return window.tab?.('failures',b);if(a==='in-progress'||a==='queue'){window.tab?.('dashboard',b);return document.getElementById('fsInProgress')?.scrollIntoView({behavior:'smooth'})}if(a==='waiting')return hf('waiting-subtitle',b);if(a==='completed')return hf('applied',b);if(a==='dry-run')return window.tab?.('library',b);if(a==='workers')return window.openSettingsNav?.('whisper',b);if(a==='integrations')return window.openSetupWizard?.(false);if(a==='health'){window.tab?.('dashboard',b);return document.getElementById('fsWorkerCard')?.scrollIntoView({behavior:'smooth'})}}
+  const kpi=(i,l,id,s)=>`<div class="fs-kpi"><div class="fs-kpi-icon">${i}</div><div><div class="fs-kpi-label">${l}</div><div class="fs-kpi-value" id="${id}">—</div><div class="fs-kpi-sub">${s}</div></div></div>`,sec=(t,id,sm='')=>`<div class="fs-media-section" id="${id}"><div class="fs-section-head"><h2>${t}</h2><span class="fs-link">View all</span></div><div class="fs-row ${sm}" data-row></div></div>`;
+  function dashboard(){const p=document.getElementById('dashboardPane');if(!p||document.getElementById('fsDashboard'))return;const l=document.createElement('div');l.className='fs-legacy';[...p.children].forEach(x=>l.appendChild(x));p.appendChild(l);const d=document.createElement('div');d.id='fsDashboard';d.className='fs-dashboard';d.innerHTML=`<div class="fs-kpis">${kpi('✓','Total Processed','fsKpiTotal','Media tracked')}${kpi('♫','Clean Tracks Created','fsKpiClean','CLEAN audio tracks')}${kpi('⚙','Jobs In Progress','fsKpiJobs','Active processing')}${kpi('▤','Queue','fsKpiQueue','Waiting to process')}${kpi('♟','Worker Status','fsKpiWorkers','Transcription worker')}</div><div class="fs-main-grid"><div class="fs-media-panel">${sec('Recently Processed','fsRecent')}${sec('In Progress','fsInProgress')}<div style="display:grid;grid-template-columns:1fr .62fr">${sec('Waiting for Subtitles','fsWaiting','small')}${sec('Needs Review','fsReview','small')}</div></div><div class="fs-side"><div class="fs-side-card" id="fsWorkerCard"><div class="fs-side-title"><h2>⚙ Worker & Transcription</h2><span class="fs-link" id="fsWorkerOpen">Open Panel</span></div><div class="fs-worker-grid"><div><div class="fs-stat"><span>Model</span><b id="fsWorkerModel">—</b></div><div class="fs-stat"><span>Mode</span><b id="fsWorkerMode">—</b></div><div class="fs-stat"><span>Device</span><b>Remote / Local</b></div><div class="fs-stat"><span>Current job</span><b id="fsWorkerJob">—</b></div></div><div><div class="fs-stat"><span>Status</span><b class="fs-online" id="fsWorkerState">—</b></div><div class="fs-stat"><span>GPU progress</span><b id="fsWorkerProgress">—</b></div><div class="fs-meter"><span id="fsWorkerMeter" style="width:0%"></span></div><div class="fs-stat"><span>GPU ETA</span><b id="fsWorkerEta">—</b></div><div class="fs-stat"><span>Movie position</span><b id="fsWorkerPosition">—</b></div></div></div></div><div class="fs-side-card"><div class="fs-side-title"><h2>⌘ Integrations Status</h2><span class="fs-link" id="fsIntOpen">View all</span></div><div class="fs-integrations" id="fsIntegrations"></div></div><div class="fs-side-card"><div class="fs-side-title"><h2>◷ Recent History</h2><span class="fs-link" id="fsHistOpen">View all</span></div><table class="fs-history"><thead><tr><th>Title</th><th>Type</th><th>Status</th><th>Finished</th></tr></thead><tbody id="fsHistoryBody"></tbody></table></div></div></div><div class="fs-tipbar"><span>💡</span><div class="fs-tiptext" id="fsTip"></div><div class="fs-tipdots" id="fsTipDots"></div><button class="fs-tipnav" id="fsTipPrev">‹</button><button class="fs-tipnav" id="fsTipNext">›</button></div>`;p.insertBefore(d,l);q('#fsWorkerOpen').onclick=()=>window.openSettingsNav?.('whisper',q('[data-fs-action="workers"]'));q('#fsIntOpen').onclick=()=>window.openSetupWizard?.(false);q('#fsHistOpen').onclick=()=>window.tab?.('library',q('[data-fs-action="completed"]'));q('#fsTipPrev').onclick=()=>tip(tipIndex-1);q('#fsTipNext').onclick=()=>tip(tipIndex+1);tip(0)}
+  function tip(i){tipIndex=(i+TIPS.length)%TIPS.length;if(q('#fsTip'))q('#fsTip').textContent='Tip: '+TIPS[tipIndex];if(q('#fsTipDots'))q('#fsTipDots').innerHTML=TIPS.map((_,x)=>`<span class="fs-tipdot ${x===tipIndex?'active':''}"></span>`).join('')}
+  function card(x,o={}){const img=x?.poster?`<img src="${esc(x.poster)}" loading="lazy" onerror="this.style.display='none'">`:'<div class="fs-poster-placeholder">🎬</div>',chip=o.chip?`<span class="fs-chip ${o.cls||''}">${esc(o.chip)}</span>`:'',pr=o.progress!=null?`<div class="fs-progress-ring" style="--p:${Math.max(0,Math.min(100,Number(o.progress)))}%"><span>${Math.round(Number(o.progress))}%</span></div>`:'';return `<div class="fs-poster-card" data-id="${esc(x?.id??'')}" data-kind="${x?.kind==='TV Show'?'series':'movie'}"><div class="fs-poster">${img}${chip}${pr}</div><div class="fs-card-title">${esc(x?.title||'Untitled')}</div><div class="fs-card-sub">${esc([x?.year,x?.kind].filter(Boolean).join(' • '))}</div></div>`}
+  async function media(){try{const[m,s]=await Promise.all([fetch('/api/media-catalog?kind=movies').then(r=>r.ok?r.json():({items:[]})),fetch('/api/media-catalog?kind=series').then(r=>r.ok?r.json():({items:[]}))]);mediaCache.movies=(m.items||[]).map(x=>({...x,kind:'Movie'}));mediaCache.series=(s.items||[]).map(x=>({...x,kind:'TV Show'}))}catch(_){ }rows()}
+  function prog(){const n=Number((document.getElementById('overallProgressText')?.textContent||'').replace('%',''));return Number.isFinite(n)?n:0}function cur(){return document.getElementById('current')?.textContent?.trim()||''}
+  function rr(id,items,fn){const r=q(`#${id} [data-row]`);if(r)r.innerHTML=items.length?items.map(fn).join(''):'<div class="fs-card-sub" style="padding:12px">No matching media yet.</div>'}
+  function rows(){const all=[...mediaCache.movies,...mediaCache.series],r=all.filter(x=>good(x.censorarr_status)).slice(0,6),w=all.filter(x=>waiting(x.censorarr_status)).slice(0,6),v=all.filter(x=>review(x.censorarr_status)).slice(0,3),cn=cur().toLowerCase();let a=all.filter(x=>cn&&(String(x.media_path||x.path||'').toLowerCase().includes(cn)||(x.title||'').toLowerCase().includes(cn))).slice(0,1);const f=all.filter(x=>!good(x.censorarr_status)&&!waiting(x.censorarr_status)&&!review(x.censorarr_status));a=a.concat(f.filter(x=>!a.includes(x)).slice(0,Math.max(0,6-a.length)));rr('fsRecent',r.length?r:all.slice(0,6),x=>card(x,{chip:good(x.censorarr_status)?'CLEAN':''}));rr('fsInProgress',a.slice(0,6),(x,i)=>card(x,{progress:i===0&&cn?prog():0}));rr('fsWaiting',w.length?w:all.slice(0,6),x=>card(x,{chip:'Waiting',cls:'wait'}));rr('fsReview',v.length?v:all.slice(0,3),x=>card(x,{chip:'Review',cls:'review'}));qa('.fs-poster-card').forEach(c=>c.onclick=()=>{const id=Number(c.dataset.id);if(id)window.openMediaDetail?.(c.dataset.kind,id)})}
+  async function integrations(){const b=q('#fsIntegrations');if(!b)return;let s={};try{s=await fetch('/api/settings').then(r=>r.ok?r.json():{})}catch(_){ }const a=s.arr_integrations||{},u=s.subtitle_assist||{},rf=s.rating_filter||{},tr=s.tv?.rating_filter||{},e=[['Sonarr',!!a.sonarr?.enabled,'S'],['Radarr',!!a.radarr?.enabled,'R'],['Plex',!!(rf.plex_url||tr.plex_url),'P'],['Bazarr',!!u.bazarr?.enabled,'B'],['GPU Worker',String(s.whisper?.backend||'local')!=='local','G'],['Subtitles',u.enabled!==false,'CC']];b.innerHTML=e.map(([n,on,i])=>`<div class="fs-int"><div class="fs-int-icon">${i}</div><div><div class="fs-int-name">${n}</div><div class="fs-int-state" style="${on?'':'color:#7c92a2'}">${on?'Configured':'Optional'}</div></div></div>`).join('')}
+  async function history(){const b=q('#fsHistoryBody');if(!b)return;let r=[];try{const x=await fetch('/api/history').then(y=>y.ok?y.json():[]);r=Array.isArray(x)?x:(x.items||x.history||[])}catch(_){ }if(!r.length)r=[...mediaCache.movies.filter(x=>good(x.censorarr_status))].slice(0,5).map(x=>({movie:x.title,status:'applied',time:x.censorarr_time,type:'Movie'}));b.innerHTML=r.slice(0,5).map(x=>`<tr><td>${esc(x.movie||x.title||x.name||'Media')}</td><td>${esc(x.type||'Media')}</td><td><span class="fs-success">Success</span></td><td>${x.time?new Date(Number(x.time)*1000).toLocaleTimeString([], {hour:'numeric',minute:'2-digit'}):'—'}</td></tr>`).join('')||'<tr><td colspan="4" style="color:#7890a1">No recent history.</td></tr>'}
+  function sync(){const set=(id,v)=>{const e=document.getElementById(id);if(e)e.textContent=v},c=cur(),st=txt('gpuState');set('fsKpiTotal',txt('total'));set('fsKpiClean',txt('cleaned'));set('fsKpiJobs',c&&!/No media/i.test(c)?'1':'0');set('fsKpiQueue',txt('waiting'));set('fsKpiWorkers',/online|idle|working|busy/i.test(st)?'Online':st);set('fsWorkerModel',txt('gpuModel'));set('fsWorkerMode',/GPU/i.test(st)?'GPU (remote)':'Whisper');set('fsWorkerState',st);set('fsWorkerProgress',txt('gpuProgress'));set('fsWorkerEta',txt('gpuEta'));set('fsWorkerPosition',txt('gpuPosition'));set('fsWorkerJob',txt('gpuJob'));const p=Number((txt('gpuProgress').match(/[\d.]+/)||[0])[0]);if(q('#fsWorkerMeter'))q('#fsWorkerMeter').style.width=Math.max(0,Math.min(100,p||0))+'%';const cnt=(id,v)=>{const e=document.getElementById(id);if(e)e.textContent=v&&v!=='0'?v:''};cnt('fsCountWaiting',txt('waiting'));cnt('fsCountFailed',txt('errors'));cnt('fsCountQueue',txt('waiting'));cnt('fsCountProgress',c&&!/No media/i.test(c)?'1':'');rows()}
+  async function update(){const b=q('#fsUpdateBtn');if(!b)return;try{const s=await fetch('/api/update/status').then(r=>r.ok?r.json():null);b.innerHTML=s?.update_available?'⇩ &nbsp; Update Available':'✓ &nbsp; Up to Date';if(s?.update_available){b.style.borderColor='#ffb33b';b.style.color='#ffd28b'}}catch(_){b.innerHTML='↻ &nbsp; Check Updates'}}
+  function boot(){if(!q('.app-shell'))return;injectStyles();document.documentElement.dataset.theme='dark';sidebar();topbar();dashboard();media();integrations();history();update();sync();setInterval(sync,1800);setInterval(()=>tip(tipIndex+1),12000);setInterval(update,900000)}
+  if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',()=>setTimeout(boot,0));else setTimeout(boot,0);
 })();
