@@ -17,6 +17,16 @@ SUPPORTED_MODELS = {"mdx_q", "htdemucs"}
 DEFAULT_MODEL = "mdx_q"
 
 
+def _fmt_clock(seconds: float | int | None) -> str:
+    try:
+        total = max(0, int(float(seconds or 0)))
+    except (TypeError, ValueError):
+        total = 0
+    h, rem = divmod(total, 3600)
+    m, sec = divmod(rem, 60)
+    return f"{h:02d}:{m:02d}:{sec:02d}"
+
+
 class DialogueAIManager:
     def __init__(self) -> None:
         self.lock = threading.RLock()
@@ -57,8 +67,10 @@ class DialogueAIManager:
                     try:
                         os.killpg(os.getpgid(p.pid), signal.SIGKILL)
                     except Exception:
-                        try: p.kill()
-                        except Exception: pass
+                        try:
+                            p.kill()
+                        except Exception:
+                            pass
             self.proc = None
             self.current_job = None
             return {"ok": True, "cancelled": True, "job_id": jid, "message": "AI dialogue job cancelled"}
@@ -85,8 +97,13 @@ class DialogueAIManager:
             "-o", str(output_root),
             str(source),
         ]
+        started = time.time()
         if log:
-            log(f"AI dialogue job {job_id[:8]} starting model={model} device={device} segment={segment}s", "INFO")
+            log(
+                f"AI dialogue job {job_id[:8]} starting model={model} device={device} "
+                f"segment={segment}s source={source.stat().st_size / 1024 / 1024:.1f}MB",
+                "INFO",
+            )
         with self.lock:
             if job_id in self.cancelled:
                 raise InterruptedError("AI dialogue job cancelled")
@@ -102,6 +119,36 @@ class DialogueAIManager:
             proc = self.proc
 
         percent_re = re.compile(r"(?<!\d)(\d{1,3})%")
+        last_log_bucket = 0
+        heartbeat_stop = threading.Event()
+
+        def heartbeat() -> None:
+            while not heartbeat_stop.wait(30.0):
+                with self.lock:
+                    cur = dict(self.current_job) if self.current_job and self.current_job.get("job_id") == job_id else None
+                if not cur or not log:
+                    continue
+                elapsed = max(0.0, time.time() - started)
+                try:
+                    pct = float(cur.get("progress") or 0)
+                except (TypeError, ValueError):
+                    pct = 0.0
+                eta = elapsed * (100.0 - pct) / pct if 0.1 <= pct < 100 else None
+                eta_text = _fmt_clock(eta) if eta is not None else "calculating"
+                log(
+                    f"AI dialogue job {job_id[:8]} still running: stage={cur.get('stage') or 'separating-dialogue'} "
+                    f"progress={pct:.1f}% device={cur.get('device') or device} "
+                    f"elapsed={_fmt_clock(elapsed)} eta={eta_text}",
+                    "INFO",
+                )
+
+        heartbeat_thread = threading.Thread(
+            target=heartbeat,
+            daemon=True,
+            name=f"dialogue-heartbeat-{job_id[:8]}",
+        )
+        heartbeat_thread.start()
+
         try:
             assert proc.stdout is not None
             for raw in proc.stdout:
@@ -115,12 +162,25 @@ class DialogueAIManager:
                         with self.lock:
                             if self.current_job and self.current_job.get("job_id") == job_id:
                                 self.current_job["progress"] = pct
+                        bucket = min(95, int(pct // 5) * 5)
+                        if log and bucket >= 5 and bucket > last_log_bucket:
+                            last_log_bucket = bucket
+                            elapsed = max(0.0, time.time() - started)
+                            eta = elapsed * (100.0 - pct) / pct if pct > 0 else None
+                            log(
+                                f"AI dialogue job {job_id[:8]}: {bucket}% · model={model} device={device} "
+                                f"elapsed={_fmt_clock(elapsed)} eta={_fmt_clock(eta)}",
+                                "INFO",
+                            )
                     except Exception:
                         pass
                 if log and ("%" not in line or "error" in line.lower() or "warning" in line.lower()):
                     log("Demucs: " + line[-1000:], "INFO")
             rc = proc.wait()
         finally:
+            heartbeat_stop.set()
+            if heartbeat_thread.is_alive():
+                heartbeat_thread.join(timeout=1.0)
             with self.lock:
                 if self.proc is proc:
                     self.proc = None
@@ -132,7 +192,14 @@ class DialogueAIManager:
         candidates = list(output_root.rglob("vocals.flac"))
         if not candidates:
             raise RuntimeError("Demucs completed but vocals.flac was not created")
-        return max(candidates, key=lambda p: p.stat().st_mtime)
+        result = max(candidates, key=lambda p: p.stat().st_mtime)
+        if log:
+            log(
+                f"AI dialogue job {job_id[:8]} separation complete on {device}: "
+                f"stem={result.stat().st_size / 1024 / 1024:.1f}MB elapsed={_fmt_clock(time.time() - started)}",
+                "INFO",
+            )
+        return result
 
     def run(
         self,
@@ -170,7 +237,11 @@ class DialogueAIManager:
         try:
             # Release CTranslate2/Whisper VRAM before loading PyTorch/Demucs. This is
             # essential for small cards such as the GTX 1060 3 GB.
+            if log:
+                log(f"AI dialogue job {job_id[:8]}: releasing Whisper/CTranslate2 GPU memory", "INFO")
             before_gpu()
+            if log:
+                log(f"AI dialogue job {job_id[:8]}: GPU memory released; launching Demucs", "INFO")
             try:
                 path = self._run_demucs(job_id, source, output_root, name, seg, "cuda", log)
                 device = "cuda"
@@ -183,17 +254,25 @@ class DialogueAIManager:
                     log(f"AI dialogue CUDA attempt failed ({gpu_exc}); retrying on CPU", "WARNING")
                 # Remove partial model output before retrying.
                 for candidate in output_root.rglob("vocals.flac"):
-                    try: candidate.unlink()
-                    except OSError: pass
+                    try:
+                        candidate.unlink()
+                    except OSError:
+                        pass
                 path = self._run_demucs(job_id, source, output_root, name, max(seg, 6), "cpu", log)
                 device = "cpu"
             with self.lock:
                 if self.current_job and self.current_job.get("job_id") == job_id:
                     self.current_job.update({"stage": "finishing", "progress": 100.0, "device": device})
+            if log:
+                log(f"AI dialogue job {job_id[:8]}: separation phase finished; preparing stem response", "INFO")
             return path, device
         finally:
             try:
+                if log:
+                    log(f"AI dialogue job {job_id[:8]}: restarting Whisper ASR engine", "INFO")
                 after_gpu()
+                if log:
+                    log(f"AI dialogue job {job_id[:8]}: Whisper ASR engine ready again", "INFO")
             finally:
                 with self.lock:
                     self.current_job = None
