@@ -12,6 +12,7 @@ from fastapi.responses import Response
 
 import ai_dialogue
 import audio_track_management
+import audio_track_progress
 import automation_audio_sources
 import fast_metadata_cache
 from dialogue_enhancement import DEFAULTS
@@ -74,6 +75,7 @@ def install(app, core) -> None:
 
     fast_metadata_cache.install(app, core)
     audio_track_management.install(app, core)
+    audio_track_progress.install(app, core)
 
     import updater
     updater._platform = lambda: "development"
