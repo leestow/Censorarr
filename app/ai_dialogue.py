@@ -2,8 +2,8 @@
 
 The heavy separator runs on the optional Censorarr GPU worker. Censorarr sends only
 one selected audio track as compressed stereo FLAC, receives an isolated dialogue
-stem, then mixes that stem back into the exact same source audio before adding the
-normal Dialogue Enhanced track to the media container.
+stem, then uses that stem both as the enhanced speech layer and as a sidechain key
+that smoothly ducks the original movie mix while dialogue is active.
 """
 from __future__ import annotations
 
@@ -206,29 +206,77 @@ def _remote_isolate(
         conn.close()
 
 
-def _stem_gain_db(strength: str) -> float:
+def _mix_profile(strength: str) -> dict:
+    """Return speech lift and sidechain settings for the three user strengths.
+
+    The compressor is keyed only by the AI-isolated dialogue stem. That means the
+    soundtrack is left alone when nobody is speaking and smoothly ducks only while
+    detected speech is present. The values intentionally favor long, transparent
+    release times over aggressive broadcast-style pumping.
+    """
     level = str(strength or "medium").lower().strip()
     if level == "light":
-        return -11.0
+        return {
+            "voice_gain_db": -10.0,
+            "threshold": 0.040,
+            "ratio": 2.2,
+            "attack_ms": 22,
+            "release_ms": 420,
+            "sidechain_level": 1.45,
+            "target_duck_db": 2,
+        }
     if level == "strong":
-        return -5.0
-    return -8.0
+        return {
+            "voice_gain_db": -4.5,
+            "threshold": 0.018,
+            "ratio": 7.0,
+            "attack_ms": 10,
+            "release_ms": 650,
+            "sidechain_level": 2.40,
+            "target_duck_db": 6,
+        }
+    return {
+        "voice_gain_db": -7.0,
+        "threshold": 0.026,
+        "ratio": 4.0,
+        "attack_ms": 15,
+        "release_ms": 520,
+        "sidechain_level": 1.90,
+        "target_duck_db": 4,
+    }
 
 
-def _build_enhanced_flac(pc, source_flac: Path, dialogue_flac: Path, dest: Path, cfg: dict, progress_callback=None) -> None:
+def _build_enhanced_flac(pc, source_flac: Path, dialogue_flac: Path, dest: Path, cfg: dict, progress_callback=None) -> dict:
     dcfg = _dialogue_cfg(cfg)
-    gain = _stem_gain_db(str(dcfg.get("strength", "medium")))
-    # The original mix remains intact. Adding the isolated stem at a controlled negative
-    # gain raises speech relative to music/effects without replacing the movie's ambience.
+    strength = str(dcfg.get("strength", "medium"))
+    mix = _mix_profile(strength)
+
+    # Prepare the AI dialogue once, split it into a sidechain key and the audible
+    # speech layer, then duck the original movie mix only while that key is active.
+    # This preserves full-impact music/effects in non-dialogue moments while reducing
+    # masking during speech. The limiter catches only final peaks after remixing.
     filt = (
-        f"[0:a]aformat=sample_rates=44100:channel_layouts=stereo[base];"
-        f"[1:a]highpass=f=80,lowpass=f=12000,"
-        f"acompressor=threshold=0.10:ratio=2.5:attack=8:release=140:makeup=1.10,"
-        f"volume={gain:.1f}dB[voice];"
-        f"[base][voice]amix=inputs=2:duration=first:dropout_transition=0:normalize=0,"
-        f"alimiter=limit=0.95[enh]"
+        "[0:a]aformat=sample_rates=44100:channel_layouts=stereo[base];"
+        "[1:a]aformat=sample_rates=44100:channel_layouts=stereo,"
+        "highpass=f=80,lowpass=f=12000,"
+        "acompressor=threshold=0.085:ratio=2.4:attack=8:release=150:makeup=1.10,"
+        "asplit=2[voicekey][voiceaud];"
+        f"[base][voicekey]sidechaincompress=threshold={mix['threshold']:.3f}:"
+        f"ratio={mix['ratio']:.2f}:attack={mix['attack_ms']}:release={mix['release_ms']}:"
+        f"knee=3:level_sc={mix['sidechain_level']:.2f}:mix=1[ducked];"
+        f"[voiceaud]volume={mix['voice_gain_db']:.1f}dB[voice];"
+        "[ducked][voice]amix=inputs=2:duration=first:dropout_transition=0:normalize=0,"
+        "alimiter=limit=0.95[enh]"
     )
     probe = pc.ffprobe(source_flac)
+    pc.logging.info(
+        "AI Dialogue remix: strength=%s dialogue-aware duck≈%sdB voice_layer=%+.1fdB attack=%sms release=%sms",
+        strength,
+        mix["target_duck_db"],
+        mix["voice_gain_db"],
+        mix["attack_ms"],
+        mix["release_ms"],
+    )
     cmd = [
         "ffmpeg", "-hide_banner", "-loglevel", "warning", "-y",
         "-i", str(source_flac), "-i", str(dialogue_flac),
@@ -243,6 +291,14 @@ def _build_enhanced_flac(pc, source_flac: Path, dialogue_flac: Path, dest: Path,
         )
     else:
         pc.run(cmd)
+    return {
+        "ducking": True,
+        "strength": strength,
+        "target_duck_db": mix["target_duck_db"],
+        "voice_gain_db": mix["voice_gain_db"],
+        "attack_ms": mix["attack_ms"],
+        "release_ms": mix["release_ms"],
+    }
 
 
 def add_ai_dialogue_track(
@@ -289,7 +345,7 @@ def add_ai_dialogue_track(
             "AI Dialogue: isolated stem complete (model=%s device=%s elapsed=%ss)",
             remote_meta.get("model"), remote_meta.get("device"), remote_meta.get("elapsed_seconds"),
         )
-        _build_enhanced_flac(pc, source_flac, stem_flac, enhanced_flac, cfg, progress_callback)
+        mix_meta = _build_enhanced_flac(pc, source_flac, stem_flac, enhanced_flac, cfg, progress_callback)
 
         current_probe = pc.ffprobe(out)
         existing = find_named_audio(current_probe, title)
@@ -353,7 +409,7 @@ def add_ai_dialogue_track(
                 pass
         if progress_callback:
             progress_callback(100.0)
-        return {"method": "ai", **remote_meta}
+        return {"method": "ai", **remote_meta, **mix_meta}
     finally:
         import shutil
         shutil.rmtree(workdir, ignore_errors=True)
