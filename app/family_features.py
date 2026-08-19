@@ -406,7 +406,26 @@ def install(pc, dialogue) -> None:
             pc.update_heartbeat("completed", str(path), progress=100, features_disabled=True)
             return {"status": "features-disabled", "detections": 0}
 
-        profanity_needed, dialogue_needed = _feature_needs(path, cfg, infer_physical=True)
+        manual_force = False
+        try:
+            manual_force = bool(getattr(pc, "manual_processing_active", lambda: False)())
+        except Exception:
+            manual_force = False
+
+        if manual_force:
+            # A user-clicked Process/Reprocess is an explicit request to rebuild every
+            # currently enabled feature. Do not let old completion markers or a physical
+            # CLEAN/DIALOGUE track turn that request into a silent "features-present" no-op.
+            profanity_needed = profanity_enabled
+            dialogue_needed = dialogue_enabled
+            pc.logging.info(
+                "Manual Process/Reprocess: forcing enabled audio features (profanity=%s dialogue=%s): %s",
+                profanity_enabled,
+                dialogue_enabled,
+                path,
+            )
+        else:
+            profanity_needed, dialogue_needed = _feature_needs(path, cfg, infer_physical=True)
 
         if dialogue_enabled and dialogue_needed and not profanity_needed:
             return dialogue_only(
