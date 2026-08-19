@@ -160,7 +160,9 @@
       // A mixed/stale deployment should never leave Details dead. Fall back to the
       // canonical endpoint if the fast route is unavailable or temporarily unhealthy.
       try {
-        return await api('/api/media-detail?kind=' + encodeURIComponent(kind) + '&id=' + Number(id));
+        const normal = await api('/api/media-detail?kind=' + encodeURIComponent(kind) + '&id=' + Number(id));
+        normal._fast_detail_fallback = true;
+        return normal;
       } catch (normalError) {
         normalError.fastDetailError = fastError;
         throw normalError;
@@ -208,8 +210,16 @@
           return fast;
         }
 
-        // TV's fast payload intentionally has no episode rows. Paint/refresh the show-level
-        // metadata immediately, then fetch the full episode list in the background.
+        // If the fast endpoint was unavailable, fetchDetailWithFallback already returned
+        // the canonical TV detail with its full episode list. Do not request it twice.
+        if (fast._fast_detail_fallback || (Array.isArray(fast.episodes) && !fast.episodes_deferred)) {
+          detailCache.set(cacheKey, {time: Date.now(), data: fast});
+          paintDetail(kind, fast);
+          return fast;
+        }
+
+        // TV's normal fast payload intentionally has no episode rows. Paint/refresh the
+        // show-level metadata immediately, then fetch the full episode list in background.
         paintDetail(kind, fast);
         showLoadingHint(kind);
 
