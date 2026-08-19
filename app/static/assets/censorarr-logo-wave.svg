@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 420 82" role="img" aria-label="Censorarr">
+  <defs>
+    <linearGradient id="ring" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#25d8ff"/><stop offset="1" stop-color="#2388ff"/>
+    </linearGradient>
+  </defs>
+  <g transform="translate(8 8)">
+    <circle cx="33" cy="33" r="29" fill="#071724" stroke="url(#ring)" stroke-width="3"/>
+    <g stroke="#3fdbff" stroke-width="3" stroke-linecap="round">
+      <path d="M17 31v4"/><path d="M23 25v16"/><path d="M29 19v28"/><path d="M35 23v20"/><path d="M41 16v34"/><path d="M47 25v16"/><path d="M53 30v6"/>
+    </g>
+  </g>
+  <text x="82" y="55" font-family="Inter,Segoe UI,Arial,sans-serif" font-size="45" font-weight="800" fill="#f4f8fc" letter-spacing="-1.2">Censor<tspan fill="#339cff">arr</tspan></text>
+</svg>
