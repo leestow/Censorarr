@@ -10,6 +10,7 @@ import urllib.request
 from fastapi import Depends, HTTPException, Query, Request
 from fastapi.responses import Response
 
+import automation_audio_sources
 import fast_metadata_cache
 from dialogue_enhancement import DEFAULTS
 
@@ -22,7 +23,17 @@ WIKI_TTL_SECONDS = 6 * 3600
 def _payload(cfg: dict) -> dict:
     current = dict(DEFAULTS)
     current.update(cfg.get("dialogue_enhancement", {}) or {})
-    current["profanity_censoring_enabled"] = bool((cfg.get("profanity", {}) or {}).get("enabled", True))
+    profanity = cfg.get("profanity", {}) or {}
+    current["profanity_censoring_enabled"] = bool(profanity.get("enabled", True))
+    current["profanity_source_preference"] = automation_audio_sources.normalize_profanity_source(
+        profanity.get("source_preference")
+    )
+    current["dialogue_source_preference"] = automation_audio_sources.normalize_dialogue_source(
+        current.get("source_preference")
+    )
+    current["dialogue_source_fallback"] = automation_audio_sources.normalize_dialogue_fallback(
+        current.get("source_fallback")
+    )
     return current
 
 
@@ -76,6 +87,7 @@ def install(app, core) -> None:
     for key, value in DEFAULTS.items():
         defaults.setdefault(key, value)
     core.pc.DEFAULT_CONFIG.setdefault("profanity", {}).setdefault("enabled", True)
+    automation_audio_sources.install_defaults(core.pc)
 
     # Family-safe has one processing behavior. The underlying engine keeps its old config
     # field for backward compatibility, but this branch pins it off before any worker starts.
@@ -124,10 +136,29 @@ def install(app, core) -> None:
         body = await request.json()
         raw = core.yaml.safe_load(core.CONFIG.read_text(encoding="utf-8")) or {}
         current = raw.setdefault("dialogue_enhancement", {})
+        profanity = raw.setdefault("profanity", {})
 
         current["enabled"] = bool(body.get("enabled", current.get("enabled", False)))
         if "profanity_censoring_enabled" in body:
-            raw.setdefault("profanity", {})["enabled"] = bool(body.get("profanity_censoring_enabled"))
+            profanity["enabled"] = bool(body.get("profanity_censoring_enabled"))
+
+        if "profanity_source_preference" in body:
+            source = str(body.get("profanity_source_preference") or "").strip().lower()
+            if source not in automation_audio_sources.PROFANITY_SOURCE_OPTIONS:
+                raise HTTPException(400, "Invalid Profanity Censoring automation source")
+            profanity["source_preference"] = source
+
+        if "dialogue_source_preference" in body:
+            source = str(body.get("dialogue_source_preference") or "").strip().lower()
+            if source not in automation_audio_sources.DIALOGUE_SOURCE_OPTIONS:
+                raise HTTPException(400, "Invalid Dialogue Enhancement automation source")
+            current["source_preference"] = source
+
+        if "dialogue_source_fallback" in body:
+            fallback = str(body.get("dialogue_source_fallback") or "").strip().lower()
+            if fallback not in automation_audio_sources.DIALOGUE_FALLBACK_OPTIONS:
+                raise HTTPException(400, "Invalid Dialogue Enhancement source fallback")
+            current["source_fallback"] = fallback
 
         title = str(body.get("title", current.get("title", DEFAULTS["title"])) or "").strip()
         if not title:
@@ -167,7 +198,7 @@ def install(app, core) -> None:
         return {
             "ok": True,
             "settings": _payload(raw),
-            "message": "Audio feature settings saved. The worker will reload after the current item.",
+            "message": "Audio feature and automation-source settings saved. The worker will reload after the current item.",
         }
 
     def wiki_cache_dir():
@@ -270,6 +301,9 @@ def install(app, core) -> None:
         usability = core.STATIC / "ui-usability-pass.js"
         if usability.is_file():
             content += "\n\n/* Family-safe usability pass */\n" + usability.read_text(encoding="utf-8")
+        source_rules = core.STATIC / "ui-audio-source-rules.js"
+        if source_rules.is_file():
+            content += "\n\n/* Automation audio-source rules */\n" + source_rules.read_text(encoding="utf-8")
         persistent_cache = core.STATIC / "ui-persistent-metadata-cache.js"
         if persistent_cache.is_file():
             content += "\n\n/* Persistent stale-while-revalidate media metadata cache */\n" + persistent_cache.read_text(encoding="utf-8")
