@@ -76,7 +76,7 @@
       genres: Array.isArray(item.genres) ? item.genres : [],
       monitored: item.monitored !== false,
       // Keep media_path blank on this first paint. The protected Audio Tracks hook uses
-      // media_path as its signal to ffprobe; we only want that once the real detail payload
+      // media_path as its signal to ffprobe; we only want that once the fast detail payload
       // arrives, not twice during the cached preview + refresh sequence.
       path: exactFile || item.path || '',
       media_path: '',
@@ -161,10 +161,10 @@
       }
 
       try {
-        // Refresh the complete detail payload in the background. The user already sees
-        // the cached poster/title/status, so a slower Radarr/filesystem lookup no longer
-        // blocks navigation or leaves the page sitting on a spinner.
-        const d = await api('/api/media-detail?kind=movie&id=' + Number(id));
+        // This endpoint is backed by the same persistent Movies catalog and intentionally
+        // does NOT ffprobe the MKV. Audio Tracks performs the one protected stream probe
+        // independently after this fast payload paints.
+        const d = await api('/api/media-detail-fast?kind=movie&id=' + Number(id));
         movieDetailCache.set(cacheKey, {time: Date.now(), data: d});
 
         if (requestId !== movieDetailRequest || !detailView?.classList.contains('active')) return d;
