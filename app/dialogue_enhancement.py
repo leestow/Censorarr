@@ -1,8 +1,7 @@
 """Experimental dialogue-enhancement support for Censorarr.
 
-This module is installed only by the Docker/Synology development worker. It keeps
-core profanity/remux logic untouched: the normal CLEAN-track remux runs first, then
-an optional second remux adds a speech-focused stereo track.
+Censorarr supports two dialogue engines: AI Dialogue Isolation on the optional GPU
+worker, and the original lightweight center/EQ/compression path as a fast fallback.
 """
 from __future__ import annotations
 
@@ -10,11 +9,19 @@ import os
 from pathlib import Path
 from typing import Any
 
+import ai_dialogue
+
 DEFAULTS: dict[str, Any] = {
     "enabled": False,
     "title": "English - DIALOGUE ENHANCED",
     "language": "eng",
     "strength": "medium",
+    "method": "ai",
+    "ai_model": "mdx_q",
+    "ai_fallback_classic": True,
+    "ai_worker_cpu_fallback": True,
+    "ai_segment_seconds": 4,
+    "ai_timeout_seconds": 7200,
     "codec": "aac",
     "bitrate": "192k",
     "make_default": False,
@@ -76,8 +83,6 @@ def _dialogue_filter(audio_stream: dict, strength: str) -> str:
             f"FR={front:.3f}*FR+{center:.3f}*FC+{surround:.3f}*BR+{surround:.3f}*SR"
         )
 
-    # Keep rumble/explosions from masking speech, add a presence lift around the
-    # consonant band, then reduce dynamics so quiet dialogue is easier to hear.
     filters.extend([
         "highpass=f=80",
         "lowpass=f=12000",
@@ -96,6 +101,33 @@ def _add_dialogue_track(pc, src: Path, out: Path, audio_rel: int, cfg: dict, pro
     title = str(dcfg.get("title") or DEFAULTS["title"]).strip()
     if not title:
         raise RuntimeError("Dialogue enhancement title cannot be blank")
+
+    method = str(dcfg.get("method") or "ai").strip().lower()
+    if method == "ai":
+        try:
+            meta = ai_dialogue.add_ai_dialogue_track(
+                pc,
+                src,
+                out,
+                audio_rel,
+                cfg,
+                _find_named_audio,
+                progress_callback,
+            )
+            pc.logging.info(
+                "AI Dialogue Enhanced track added: %s (model=%s device=%s)",
+                title,
+                meta.get("model", dcfg.get("ai_model", "mdx_q")),
+                meta.get("device", "remote"),
+            )
+            return
+        except Exception as exc:
+            if not bool(dcfg.get("ai_fallback_classic", True)):
+                raise
+            pc.logging.warning(
+                "AI Dialogue Isolation unavailable/failed (%s); falling back to Classic enhancement",
+                exc,
+            )
 
     current_probe = pc.ffprobe(out)
     existing = _find_named_audio(current_probe, title)
@@ -120,7 +152,7 @@ def _add_dialogue_track(pc, src: Path, out: Path, audio_rel: int, cfg: dict, pro
         temp.unlink()
 
     pc.logging.info(
-        "Building dialogue-enhanced track: title=%s strength=%s source_audio=%s",
+        "Building Classic dialogue-enhanced track: title=%s strength=%s source_audio=%s",
         title,
         dcfg.get("strength", "medium"),
         audio_rel,
@@ -168,7 +200,7 @@ def _add_dialogue_track(pc, src: Path, out: Path, audio_rel: int, cfg: dict, pro
                 f"Dialogue enhancement validation failed: expected one track titled {title!r}, found {len(found)}"
             )
         os.replace(temp, out)
-        pc.logging.info("Dialogue-enhanced track added: %s", title)
+        pc.logging.info("Classic dialogue-enhanced track added: %s", title)
     finally:
         try:
             if temp.exists():
@@ -213,8 +245,6 @@ def install(pc) -> None:
         clean_cfg = cfg.get("clean_track", {})
         if bool(clean_cfg.get("place_clean_first", True)) and clean_rel != 0:
             raise RuntimeError(f"Validation failed: CLEAN audio was expected first but is audio stream {clean_rel}")
-        # Dialogue Enhanced may intentionally become the sole default. Only require
-        # CLEAN to remain default when the user did not request that override.
         if (
             bool(clean_cfg.get("make_default", False))
             and not bool(dcfg.get("make_default", False))
