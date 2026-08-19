@@ -62,7 +62,6 @@ Use the **Browse...** button beside the Movies and TV folder fields. Native Wind
 
 Start with:
 
-- **Dry Run** enabled
 - a small test folder or small media set
 - local CPU transcription first, or configure the remote GPU Worker if desired
 - optional Plex/Radarr/Sonarr/Bazarr integrations only after the core scan works
@@ -75,7 +74,7 @@ If a network path works in File Explorer but not in Censorarr:
 
 1. Confirm Censorarr is running under the same Windows account.
 2. Prefer a UNC path such as `\\SERVER\Share\Movies` if a mapped drive is unavailable after sign-in.
-3. Confirm the Windows account has read/write permission if Apply mode will modify media.
+3. Confirm the Windows account has read/write permission because Censorarr creates and validates a replacement media file when processing.
 4. Restart Censorarr after changing credentials or mappings.
 
 ## Local CPU and remote GPU
