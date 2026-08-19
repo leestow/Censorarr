@@ -11,6 +11,7 @@ from pathlib import Path
 
 import censorarr as pc
 import dialogue_enhancement
+import family_features
 import plex_metadata_cache
 
 VERSION = "1.6.8-dev"
@@ -64,8 +65,8 @@ def preserve_processed_media_metadata(src_stat, temp_out: Path, cfg: dict) -> No
 
 pc.preserve_metadata = preserve_processed_media_metadata
 
-# Experimental feature branch only. The installer adds config defaults and wraps the
-# normal CLEAN remux/validation path. It is disabled until explicitly enabled.
+# Experimental feature branch only. Dialogue enhancement wraps the normal CLEAN
+# remux/validation path when both features are active.
 dialogue_enhancement.install(pc)
 
 
@@ -79,21 +80,27 @@ def after_success_with_plex_analyze(
     rating: str | None,
     report: str | None,
 ) -> None:
-    """Run normal completion actions, then ask Plex to re-analyze changed media."""
+    """Run normal completion actions, then ask Plex to refresh/analyze changed media."""
     _original_after_success(path, cfg, status, rating, report)
 
     plex_cfg = cfg.get("plex_activity", {}) or {}
-    if status != "applied" or not bool(plex_cfg.get("refresh_after_processing", True)):
+    if status not in {"applied", "dialogue-applied"} or not bool(plex_cfg.get("refresh_after_processing", True)):
         return
 
     try:
-        # ratingKey is stable for an existing Plex item. The persistent cache performs
-        # its own lightweight change check, so Analyze must not force a full library pull.
         item, _why = pc.plex_item_for(path, cfg, force_refresh=False)
         rating_key = item.get("ratingKey") if item else None
         if not rating_key:
-            pc.logging.warning("Plex analyze skipped; no ratingKey found for %s", path.name)
+            pc.logging.warning("Plex refresh/analyze skipped; no ratingKey found for %s", path.name)
             return
+        # The stable completion hook already requests Refresh for CLEAN-track changes.
+        # Dialogue-only changes need the same refresh before Analyze.
+        if status == "dialogue-applied":
+            try:
+                pc.integ.plex_refresh_rating_key(cfg, rating_key)
+                pc.logging.info("Requested Plex refresh for dialogue-enhanced %s", path.name)
+            except Exception as exc:
+                pc.logging.warning("Plex refresh after dialogue enhancement failed for %s: %s", path.name, exc)
         pc.integ.plex_request(
             cfg,
             f"/library/metadata/{rating_key}/analyze",
@@ -106,6 +113,10 @@ def after_success_with_plex_analyze(
 
 
 pc.after_success = after_success_with_plex_analyze
+
+# Independent master switches for Profanity Censoring and Dialogue Enhancement.
+# This is installed last so dialogue-only processing sees all safety/Plex hooks above.
+family_features.install(pc, dialogue_enhancement)
 
 
 if __name__ == "__main__":
