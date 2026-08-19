@@ -43,7 +43,6 @@
       .fs-wiki-item b{font-size:12px!important;font-weight:700!important;line-height:1.25}
       .fs-wiki-item span:first-child{font-size:13px;display:flex;align-items:center;justify-content:center;width:24px;min-width:24px}
       .fs-wiki-item.active{box-shadow:inset 3px 0 0 var(--accent2)!important}
-      .fs-wiki-plumbing{display:none!important}
 
       .settings-page[data-settings="general"]{max-width:1320px!important;width:100%!important}
       .settings-page[data-settings="general"]>.section{margin-bottom:14px!important}
@@ -96,14 +95,13 @@
 
   function organizeWiki(){
     const box=q('#fsWikiList');
-    if(!box||box.dataset.fsGrouped==='1')return;
-    const buttons=qa('.fs-wiki-item[data-wiki-slug]',box);if(!buttons.length)return;
-    const usable=[];
-    for(const b of buttons){
+    if(!box||box.querySelector('.fs-wiki-group'))return;
+    const buttons=qa(':scope > .fs-wiki-item[data-wiki-slug]',box);if(!buttons.length)return;
+    const usable=buttons.filter(b=>{
       const slug=String(b.dataset.wikiSlug||'');
-      if(/^_/.test(slug)||/^_?sidebar$/i.test(slug)||/^_?footer$/i.test(slug)){b.classList.add('fs-wiki-plumbing');continue}
-      usable.push(b);
-    }
+      if(/^_/.test(slug)||/^_?sidebar$/i.test(slug)||/^_?footer$/i.test(slug)){b.remove();return false}
+      return true;
+    });
     const frag=document.createDocumentFragment(),assigned=new Set();
     for(const [title,test] of GROUPS){
       const items=usable.filter(b=>!assigned.has(b)&&test(String(b.dataset.wikiSlug||'')));if(!items.length)continue;
@@ -118,16 +116,25 @@
       const head=document.createElement('div');head.className='fs-wiki-group-title';head.textContent='More Help';
       const list=document.createElement('div');list.className='fs-wiki-group-items';other.forEach(b=>list.appendChild(b));group.append(head,list);frag.appendChild(group);
     }
-    box.innerHTML='';box.appendChild(frag);box.dataset.fsGrouped='1';
+    box.innerHTML='';box.appendChild(frag);
   }
 
   function polishGeneral(){const page=q('.settings-page[data-settings="general"]');if(page)page.classList.add('fs-general-polished')}
-  function apply(){addStyles();const box=q('#fsWikiList');if(box&&box.dataset.fsGrouped!=='1')organizeWiki();polishGeneral()}
+  function apply(){addStyles();organizeWiki();polishGeneral()}
 
   const observer=new MutationObserver(muts=>{
     let wiki=false,general=false;
-    for(const m of muts){const t=m.target instanceof Element?m.target:m.target?.parentElement;if(t?.id==='fsWikiList'||t?.closest?.('#fsWikiList'))wiki=true;if(t?.closest?.('.settings-page[data-settings="general"]'))general=true}
-    if(wiki){const box=q('#fsWikiList');if(box)box.dataset.fsGrouped='0';queueMicrotask(organizeWiki)}
+    for(const m of muts){
+      const t=m.target instanceof Element?m.target:m.target?.parentElement;
+      if(t?.id==='fsWikiList'||t?.closest?.('#fsWikiList'))wiki=true;
+      if(t?.closest?.('.settings-page[data-settings="general"]'))general=true;
+    }
+    if(wiki){
+      const box=q('#fsWikiList');
+      // ui-wiki's own renderer replaces our grouped DOM with flat direct buttons.
+      // Our grouping mutations leave .fs-wiki-group in place, so ignore those.
+      if(box && !box.querySelector('.fs-wiki-group') && box.querySelector(':scope > .fs-wiki-item[data-wiki-slug]')) queueMicrotask(organizeWiki);
+    }
     if(general)queueMicrotask(polishGeneral);
   });
 
