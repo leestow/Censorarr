@@ -5,7 +5,6 @@ extensions: [.mkv, .mp4, .m4v]
 scan_interval_seconds: 120
 stable_seconds: 300
 process_existing: true
-dry_run: true
 
 # Fresh installations remain idle until the guided setup wizard is finished.
 setup:
