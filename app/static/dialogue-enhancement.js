@@ -290,7 +290,7 @@
       el.onclick = fn;
     };
     bind('#fsRecent .fs-link', () => openHistory(document.querySelector('[data-final-action="history"]')));
-    bind('#fsWaiting .fs-link', () => openHistory(document.querySelector('[data-final-action="history"]'), 'waiting-subtitle')));
+    bind('#fsWaiting .fs-link', () => openHistory(document.querySelector('[data-final-action="history"]'), 'waiting-subtitle'));
     bind('#fsReview .fs-link', () => {
       const b = document.querySelector('[data-final-action="profanity"]');
       activate(b); window.tab?.('reviews', b);
