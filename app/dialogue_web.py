@@ -363,4 +363,7 @@ def install(app, core) -> None:
         wizard = core.STATIC / "ui-setup-wizard-modal.js"
         if wizard.is_file():
             content += "\n\n/* Guided modal Setup Wizard and retired-review UI cleanup */\n" + wizard.read_text(encoding="utf-8")
+        guide_images = core.STATIC / "ui-setup-wizard-guide-images.js"
+        if guide_images.is_file():
+            content += "\n\n/* Redacted Plex/Radarr/Sonarr/Bazarr credential guide screenshots */\n" + guide_images.read_text(encoding="utf-8")
         return Response(content, media_type="application/javascript", headers={"Cache-Control": "no-cache"})
