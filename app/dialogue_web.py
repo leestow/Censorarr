@@ -286,6 +286,13 @@ def install(app, core) -> None:
         except Exception as exc:
             raise HTTPException(503, f"Wiki page unavailable: {exc}")
 
+    @app.get("/setup-wizard-v2.js", include_in_schema=False)
+    def setup_wizard_v2_script(_: bool = Depends(core.auth)):
+        js = core.STATIC / "ui-setup-wizard-v2.js"
+        if not js.is_file():
+            raise HTTPException(404, "Setup Wizard script not found")
+        return Response(js.read_text(encoding="utf-8"), media_type="application/javascript", headers={"Cache-Control": "no-cache"})
+
     @app.get("/dialogue-enhancement.js", include_in_schema=False)
     def dialogue_script(_: bool = Depends(core.auth)):
         js = core.STATIC / "dialogue-enhancement.js"
