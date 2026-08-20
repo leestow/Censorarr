@@ -332,4 +332,12 @@ def install(app, core) -> None:
         overview_controls = core.STATIC / "ui-overview-controls.js"
         if overview_controls.is_file():
             content += "\n\n/* Overview stop/pause controls */\n" + overview_controls.read_text(encoding="utf-8")
+        content += (
+            "\n\n/* Isolated Setup Wizard loader. The wizard is a separate script request so a "
+            "wizard parse/runtime error cannot prevent the main Censorarr UI bundle from loading. */\n"
+            "(()=>{try{const s=document.createElement('script');"
+            "s.src='/setup-wizard-v2.js?v=3';s.async=false;"
+            "s.onerror=()=>console.warn('Setup Wizard could not load');"
+            "document.head.appendChild(s)}catch(e){console.warn('Setup Wizard loader failed',e)}})();\n"
+        )
         return Response(content, media_type="application/javascript", headers={"Cache-Control": "no-cache"})
