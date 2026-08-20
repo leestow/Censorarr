@@ -136,14 +136,14 @@
   const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
   const good=s=>['applied','clean-exists','skipped-clean-exists','no-detections'].includes(String(s||''));
   const waiting=s=>['waiting-subtitle','waiting-rating'].includes(String(s||''));
-  const review=s=>String(s||'')==='awaiting-review';
   let catalog={movies:[],series:[]},status={},loading=false;
 
   function ownRows(){
-    ['fsRecent','fsInProgress','fsWaiting','fsReview'].forEach(id=>{
+    const review=q('#fsReview');if(review)review.remove();
+    ['fsRecent','fsInProgress','fsWaiting'].forEach(id=>{
       const row=q(`#${id} [data-row]`);if(row){row.removeAttribute('data-row');row.dataset.overviewRow='1'}
     });
-    return ['fsRecent','fsInProgress','fsWaiting','fsReview'].every(id=>q(`#${id} [data-overview-row]`));
+    return ['fsRecent','fsInProgress','fsWaiting'].every(id=>q(`#${id} [data-overview-row]`));
   }
 
   function card(x,opt={}){
@@ -171,15 +171,13 @@
     const all=[...catalog.movies,...catalog.series];
     const recent=all.filter(x=>good(x.censorarr_status)).sort((a,b)=>Number(b.censorarr_time||0)-Number(a.censorarr_time||0)).slice(0,6);
     const waits=all.filter(x=>waiting(x.censorarr_status)).slice(0,6);
-    const reviews=all.filter(x=>review(x.censorarr_status)).slice(0,3);
     const cur=currentPath();
     const active=all.filter(x=>cur&&(String(x.media_path||x.path||'').toLowerCase().includes(cur)||cur.includes(String(x.media_path||x.path||'').toLowerCase())||String(x.title||'').toLowerCase()&&cur.includes(String(x.title||'').toLowerCase()))).slice(0,1);
-    const pending=all.filter(x=>!good(x.censorarr_status)&&!waiting(x.censorarr_status)&&!review(x.censorarr_status)&&!active.includes(x));
+    const pending=all.filter(x=>!good(x.censorarr_status)&&!waiting(x.censorarr_status)&&String(x.censorarr_status||'')!=='awaiting-review'&&!active.includes(x));
     const inProgress=[...active,...pending].slice(0,6);
     put('fsRecent',recent.length?recent:all.slice(0,6),x=>card(x,{chip:good(x.censorarr_status)?'CLEAN':''}));
     put('fsInProgress',inProgress,(x,i)=>card(x,{progress:i===0&&active.length?progress():0}));
     put('fsWaiting',waits,x=>card(x,{chip:'Waiting',cls:'wait'}));
-    put('fsReview',reviews,x=>card(x,{chip:'Review',cls:'review'}));
   }
 
   async function loadCatalog(force=false){
