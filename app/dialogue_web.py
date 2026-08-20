@@ -55,7 +55,7 @@ def _clean_family_wiki(markdown: str) -> str:
         if heading:
             level = len(heading.group(1))
             title = heading.group(2)
-            if re.search(r"\bdry[ _-]?run\b", title, re.I):
+            if re.search(r"\b(dry[ _-]?run|needs?[ _-]?review|review[ _-]?mode)\b", title, re.I):
                 skipping_section = True
                 skip_level = level
                 continue
@@ -63,7 +63,7 @@ def _clean_family_wiki(markdown: str) -> str:
                 skipping_section = False
         if skipping_section:
             continue
-        if re.search(r"\bdry[ _-]?run\b", line, re.I):
+        if re.search(r"\b(dry[ _-]?run|needs?[ _-]?review|review[ _-]?mode)\b", line, re.I):
             continue
         out.append(line)
     return "\n".join(out)
@@ -87,6 +87,7 @@ def install(app, core) -> None:
     automation_audio_sources.install_defaults(core.pc)
 
     core.pc.DEFAULT_CONFIG["dry_run"] = False
+    core.pc.DEFAULT_CONFIG["review_mode"] = {"enabled": False}
     os.environ.pop("DRY_RUN", None)
 
     def force_normal_processing_config(path) -> None:
@@ -95,6 +96,9 @@ def install(app, core) -> None:
             changed = False
             if raw_cfg.get("dry_run") is not False:
                 raw_cfg["dry_run"] = False
+                changed = True
+            if "review_mode" in raw_cfg:
+                raw_cfg.pop("review_mode", None)
                 changed = True
             profanity = raw_cfg.setdefault("profanity", {})
             if "enabled" not in profanity:
@@ -108,6 +112,22 @@ def install(app, core) -> None:
         except Exception as exc:
             core.pc.logging.warning("Could not migrate family-safe processing settings: %s", exc)
 
+    def retire_old_review_state() -> None:
+        try:
+            state = core.read_json(core.STATE, {"files": {}})
+            files = state.get("files") if isinstance(state, dict) else None
+            if not isinstance(files, dict):
+                return
+            stale = [key for key, rec in files.items() if isinstance(rec, dict) and rec.get("status") == "awaiting-review"]
+            if not stale:
+                return
+            for key in stale:
+                files.pop(key, None)
+            core.write_json(core.STATE, state)
+            core.pc.logging.info("Retired review workflow: cleared %d stale awaiting-review state row(s)", len(stale))
+        except Exception as exc:
+            core.pc.logging.debug("Could not clear retired review state: %s", exc)
+
     original_ensure_config = core.pc.ensure_config
     if not getattr(original_ensure_config, "_family_safe_single_mode", False):
         def ensure_config_single_mode(path) -> None:
@@ -118,6 +138,20 @@ def install(app, core) -> None:
 
     if core.CONFIG.exists():
         force_normal_processing_config(core.CONFIG)
+    retire_old_review_state()
+
+    @app.middleware("http")
+    async def retired_review_api(request: Request, call_next):
+        path = request.url.path
+        if path == "/api/reviews":
+            return Response('{"items":[]}', media_type="application/json")
+        if path.startswith("/api/review/"):
+            return Response(
+                '{"detail":"The Needs Review approval workflow has been retired. Process/Reprocess runs automatically."}',
+                status_code=410,
+                media_type="application/json",
+            )
+        return await call_next(request)
 
     @app.get("/api/dialogue-enhancement/settings")
     def get_dialogue_settings(_: bool = Depends(core.auth)):
@@ -132,6 +166,7 @@ def install(app, core) -> None:
     async def save_dialogue_settings(request: Request, _: bool = Depends(core.auth)):
         body = await request.json()
         raw = core.yaml.safe_load(core.CONFIG.read_text(encoding="utf-8")) or {}
+        raw.pop("review_mode", None)
         current = raw.setdefault("dialogue_enhancement", {})
         profanity = raw.setdefault("profanity", {})
 
@@ -325,4 +360,7 @@ def install(app, core) -> None:
         overview_controls = core.STATIC / "ui-overview-controls.js"
         if overview_controls.is_file():
             content += "\n\n/* Overview stop/pause controls */\n" + overview_controls.read_text(encoding="utf-8")
+        wizard = core.STATIC / "ui-setup-wizard-modal.js"
+        if wizard.is_file():
+            content += "\n\n/* Guided modal Setup Wizard and retired-review UI cleanup */\n" + wizard.read_text(encoding="utf-8")
         return Response(content, media_type="application/javascript", headers={"Cache-Control": "no-cache"})
