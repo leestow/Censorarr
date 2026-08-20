@@ -92,9 +92,8 @@
         ${serviceCard({id:'sonarr',name:'Sonarr',icon:'/assets/sonarr.svg',desc:'TV metadata, artwork and episode information.',section:'tv'})}
         ${serviceCard({id:'radarr',name:'Radarr',icon:'/assets/radarr.svg',desc:'Movie metadata, artwork and file information.',section:'movies'})}
         ${serviceCard({id:'plex',name:'Plex',icon:'/assets/plex.svg',desc:'Ratings, playback-aware pausing and library refresh.',section:'plex'})}
-        ${serviceCard({id:'bazarr',name:'Bazarr',icon:'/assets/bazarr.svg',desc:'Optional subtitle assistance and missing-subtitle requests.',section:'subtitles'})}
+        ${serviceCard({id:'bazarr',name:'Bazarr',icon:'/assets/bazarr.svg',desc:'Subtitle assistance and missing-subtitle requests.',section:'subtitles'})}
         ${serviceCard({id:'gpu',name:'GPU Worker',icon:'/assets/censorarr-favicon-wave.svg',desc:'Remote Whisper transcription acceleration.',section:'whisper',label:'Transcription'})}
-        ${serviceCard({id:'subtitles',name:'Subtitle Assistance',icon:'CC',desc:'Embedded, local and optional Bazarr subtitle evidence.',section:'subtitles',label:'Subtitle Settings'})}
       </div>`;
       shell.appendChild(page);qa('[data-integration-section]',page).forEach(b=>b.onclick=()=>openExistingSettings(b.dataset.integrationSection));
     }
@@ -123,8 +122,8 @@
       const arr=s.arr_integrations||{},sub=s.subtitle_assist||{},plex=s.rating_filter||{},tvPlex=s.tv?.rating_filter||{},wh=s.whisper||{};
       setState('sonarr',!!(arr.sonarr?.enabled&&String(arr.sonarr?.url||'').trim()));setState('radarr',!!(arr.radarr?.enabled&&String(arr.radarr?.url||'').trim()));
       setState('plex',!!(String(plex.plex_url||'').trim()||String(tvPlex.plex_url||'').trim()));setState('bazarr',!!(sub.bazarr?.enabled&&String(sub.bazarr?.url||'').trim()));
-      const remote=String(wh.backend||'local')!=='local';setState('gpu',remote,remote?'Remote transcription configured':'Using local transcription');setState('subtitles',sub.enabled!==false,sub.enabled!==false?'Enabled':'Disabled');
-    }catch(_){['sonarr','radarr','plex','bazarr','gpu','subtitles'].forEach(id=>setState(id,false,'Status unavailable'))}
+      const remote=String(wh.backend||'local')!=='local';setState('gpu',remote,remote?'Remote transcription configured':'Using local transcription');
+    }catch(_){['sonarr','radarr','plex','bazarr','gpu'].forEach(id=>setState(id,false,'Status unavailable'))}
   }
   function wireViewAll(){const b=q('#fsIntOpen');if(b)b.onclick=e=>{e.preventDefault();openIntegrations()}}
   function boot(){addStyles();ensurePage();ensureNav();wireViewAll();setTimeout(wireViewAll,600);setTimeout(wireViewAll,1600)}
