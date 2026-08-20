@@ -290,7 +290,7 @@
       el.onclick = fn;
     };
     bind('#fsRecent .fs-link', () => openHistory(document.querySelector('[data-final-action="history"]')));
-    bind('#fsWaiting .fs-link', () => openHistory(document.querySelector('[data-final-action="history"]'), 'waiting-subtitle'));
+    bind('#fsWaiting .fs-link', () => openHistory(document.querySelector('[data-final-action="history"]'), 'waiting-subtitle')));
     bind('#fsReview .fs-link', () => {
       const b = document.querySelector('[data-final-action="profanity"]');
       activate(b); window.tab?.('reviews', b);
@@ -319,4 +319,24 @@
     setTimeout(applyUi, 60);
     setTimeout(wireViewAll, 500);
   }
+})();
+
+/* Guided setup and plain-English setting help. Loaded as separate static files so the
+   interview can evolve without making this already-large compatibility bundle harder to maintain. */
+(() => {
+  function load(src) {
+    return new Promise((resolve, reject) => {
+      const s = document.createElement('script');
+      s.src = src;
+      s.async = false;
+      s.onload = resolve;
+      s.onerror = reject;
+      document.head.appendChild(s);
+    });
+  }
+  const start = () => load('/assets/ui-guided-setup.js?v=1')
+    .then(() => load('/assets/ui-guided-setup-nav-fix.js?v=1'))
+    .catch(err => console.warn('Guided setup UI could not load', err));
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start, {once:true});
+  else start();
 })();
