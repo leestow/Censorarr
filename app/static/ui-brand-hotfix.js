@@ -33,6 +33,18 @@
         gap: 8px !important;
         padding: 10px 17px !important;
       }
+      /* The legacy responsive CSS swaps the desktop wordmark for censorarr-icon.png.
+         Keep the same Censorarr wordmark on mobile/tablet; the responsive drawer can
+         scale the SVG without changing the brand. */
+      @media(max-width:950px) {
+        .sidebar-brand img {
+          content: normal !important;
+          width: 100% !important;
+          max-height: 58px !important;
+          object-fit: contain !important;
+          object-position: center !important;
+        }
+      }
       .fs-detail-loading-hint {
         display:inline-flex;align-items:center;gap:6px;margin-left:6px;
       }
@@ -157,8 +169,6 @@
     try {
       return await api('/api/media-detail-fast?kind=' + encodeURIComponent(kind) + '&id=' + Number(id));
     } catch (fastError) {
-      // A mixed/stale deployment should never leave Details dead. Fall back to the
-      // canonical endpoint if the fast route is unavailable or temporarily unhealthy.
       try {
         const normal = await api('/api/media-detail?kind=' + encodeURIComponent(kind) + '&id=' + Number(id));
         normal._fast_detail_fallback = true;
@@ -210,16 +220,12 @@
           return fast;
         }
 
-        // If the fast endpoint was unavailable, fetchDetailWithFallback already returned
-        // the canonical TV detail with its full episode list. Do not request it twice.
         if (fast._fast_detail_fallback || (Array.isArray(fast.episodes) && !fast.episodes_deferred)) {
           detailCache.set(cacheKey, {time: Date.now(), data: fast});
           paintDetail(kind, fast);
           return fast;
         }
 
-        // TV's normal fast payload intentionally has no episode rows. Paint/refresh the
-        // show-level metadata immediately, then fetch the full episode list in background.
         paintDetail(kind, fast);
         showLoadingHint(kind);
 
