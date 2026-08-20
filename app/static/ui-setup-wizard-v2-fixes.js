@@ -66,6 +66,91 @@
     if (modal?.classList.contains('open') && button) button.disabled = false;
   }
 
+  function showFinishStatus(message, bad=false) {
+    const legacy = $('wFinishStatus');
+    if (legacy) {
+      legacy.textContent = bad ? `Could not finish setup: ${message}` : message;
+      legacy.style.color = bad ? 'var(--bad)' : 'var(--accent)';
+    }
+    const visible = $('fsWizardV2Notice');
+    if (visible) {
+      visible.textContent = bad ? `Could not finish setup: ${message}` : message;
+      visible.classList.toggle('bad', bad);
+    }
+  }
+
+  async function jsonRequest(path, options={}) {
+    const response = await fetch(path, {
+      credentials: 'same-origin',
+      headers: {'Content-Type':'application/json'},
+      ...options
+    });
+    let data = {};
+    try { data = await response.json(); } catch (_) {}
+    if (!response.ok) throw new Error(data.detail || data.error || `HTTP ${response.status}`);
+    return data;
+  }
+
+  function sameBool(a,b) { return !!a === !!b; }
+
+  function verifyCoreSettings(expected, saved) {
+    const mismatches = [];
+    const check = (label, ok) => { if (!ok) mismatches.push(label); };
+    check('existing-library processing', sameBool(expected.process_existing, saved.process_existing));
+    check('TV library', sameBool(expected.tv?.enabled, saved.tv?.enabled));
+    check('movie rating policy', sameBool(expected.rating_filter?.enabled, saved.rating_filter?.enabled));
+    check('TV rating policy', sameBool(expected.tv?.rating_filter?.enabled, saved.tv?.rating_filter?.enabled));
+    check('transcription backend', String(expected.whisper?.backend || '') === String(saved.whisper?.backend || ''));
+    check('Plex playback pause', sameBool(expected.plex_activity?.pause_when_streaming, saved.plex_activity?.pause_when_streaming));
+    check('Radarr', sameBool(expected.arr_integrations?.radarr?.enabled, saved.arr_integrations?.radarr?.enabled));
+    check('Sonarr', sameBool(expected.arr_integrations?.sonarr?.enabled, saved.arr_integrations?.sonarr?.enabled));
+    check('Bazarr', sameBool(expected.subtitle_assist?.bazarr?.enabled, saved.subtitle_assist?.bazarr?.enabled));
+    if (mismatches.length) throw new Error(`Saved settings did not verify: ${mismatches.join(', ')}`);
+  }
+
+  function installVerifiedFinish() {
+    if (window.finishSetupWizard?.__fsVerifiedSave) return;
+    const replacement = async function() {
+      const legacyButton = $('wizardFinish');
+      const v2Button = $('fsWizardV2Finish');
+      if (legacyButton) legacyButton.disabled = true;
+      if (v2Button) v2Button.disabled = true;
+      showFinishStatus('Saving setup and verifying changes…');
+      try {
+        if (typeof window.wizardCoreBody !== 'function') throw new Error('Setup settings builder is unavailable.');
+        const body = window.wizardCoreBody();
+        await jsonRequest('/api/settings', {method:'POST', body:JSON.stringify(body)});
+        const saved = await jsonRequest('/api/settings', {cache:'no-store'});
+        verifyCoreSettings(body, saved);
+        const preflight = await jsonRequest('/api/system/preflight', {cache:'no-store'});
+        if (!preflight.ok) {
+          const message = (preflight.errors || []).join(' · ') || 'Censorarr cannot access the configured media folders.';
+          throw new Error(message);
+        }
+        const complete = await jsonRequest('/api/setup/complete', {method:'POST', body:'{}'});
+        showFinishStatus(complete.message || 'Setup complete. Your changes were saved.');
+        try { WIZARD_FIRST_RUN = false; } catch (_) {}
+        setTimeout(() => {
+          const modal = $('setupModal');
+          modal?.classList.remove('open','fs-v2-open');
+          if (legacyButton) legacyButton.disabled = false;
+          if (v2Button) v2Button.disabled = false;
+          try { window.loadSettings?.(); } catch (_) {}
+          try { window.refresh?.(); } catch (_) {}
+          try { window.refreshGpuStatus?.(); } catch (_) {}
+        }, 450);
+        return complete;
+      } catch (err) {
+        if (legacyButton) legacyButton.disabled = false;
+        if (v2Button) v2Button.disabled = false;
+        showFinishStatus(err.message || String(err), true);
+        throw err;
+      }
+    };
+    replacement.__fsVerifiedSave = true;
+    window.finishSetupWizard = replacement;
+  }
+
   function wrapOpen() {
     const current = window.openSetupWizard;
     if (typeof current !== 'function' || current.__fsV2FinishReset) return;
@@ -73,17 +158,43 @@
       const result = await current.apply(this, arguments);
       resetFinishButton();
       applyTheme();
+      installVerifiedFinish();
       return result;
     };
     wrapped.__fsV2FinishReset = true;
     window.openSetupWizard = wrapped;
   }
 
+  function applyOverviewLayout() {
+    const panel = q('#fsDashboard .fs-media-panel');
+    const inProgress = $('fsInProgress');
+    const waiting = $('fsWaiting');
+    const recent = $('fsRecent');
+    const review = $('fsReview');
+    if (!panel || !inProgress || !waiting || !recent) return false;
+
+    const reviewWrap = review?.parentElement;
+    panel.insertBefore(inProgress, panel.firstChild);
+    inProgress.insertAdjacentElement('afterend', waiting);
+    waiting.insertAdjacentElement('afterend', recent);
+    waiting.querySelector('.fs-row')?.classList.remove('small');
+
+    // Review mode is retired from the family-safe overview. Keep the hidden DOM node
+    // available to older render/wiring code so it cannot break the other dashboard rows.
+    if (reviewWrap && reviewWrap !== panel) reviewWrap.style.display = 'none';
+    return true;
+  }
+
   function boot() {
     addStyles();
+    installVerifiedFinish();
     wrapOpen();
     applyTheme();
     resetFinishButton();
+    applyOverviewLayout();
+    setTimeout(applyOverviewLayout, 500);
+    setTimeout(applyOverviewLayout, 1400);
+    setTimeout(applyOverviewLayout, 3000);
 
     const wrap = q('.wrap');
     if (wrap) new MutationObserver(applyTheme).observe(wrap, {attributes:true, attributeFilter:['class']});
