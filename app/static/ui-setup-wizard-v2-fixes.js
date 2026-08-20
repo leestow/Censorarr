@@ -12,13 +12,9 @@
     const style = document.createElement('style');
     style.id = 'fsWizardV2DaylightStyles';
     style.textContent = `
-      /* General Settings must only use its special grid while it is the ACTIVE settings page.
-         The previous broad !important rule caused General to stay visible over every submenu. */
       .settings-page[data-settings="general"].fs-general-organized:not(.active){display:none!important}
       .settings-page[data-settings="general"].fs-general-organized.active{display:grid!important}
 
-      /* Daylight follows Censorarr's content theme. Keep the wizard header and step rail
-         dark, just like the app keeps its top bar and sidebar unchanged. */
       #setupModal.fs-v2-daylight>.dialog.setup-dialog{background:#f3f7fb!important;border-color:#cbdde7!important}
       #setupModal.fs-v2-daylight .fs-v2-shell{background:#f3f7fb!important;color:#142435!important}
       #setupModal.fs-v2-daylight .fs-v2-body{background:#f3f7fb!important;color:#142435!important}
@@ -52,7 +48,6 @@
       #setupModal.fs-v2-daylight .fs-v2-notice{color:#17865d!important}
       #setupModal.fs-v2-daylight .fs-v2-notice.bad{color:#c83e3e!important}
 
-      /* Premium media-service cards. */
       .fs-v2-services-grid{display:grid;grid-template-columns:repeat(4,minmax(185px,1fr));gap:12px;margin:14px 0}
       .fs-v2-service-card{margin:0!important;padding:14px!important;display:flex;flex-direction:column;min-width:0;background:linear-gradient(145deg,#0a2433,#091c29)!important;border:1px solid #24485b!important;box-shadow:0 8px 24px rgba(0,0,0,.16)}
       .fs-v2-service-head{display:grid;grid-template-columns:42px minmax(0,1fr) auto;gap:10px;align-items:center;margin-bottom:12px}
@@ -203,7 +198,7 @@
 
   function decoratePremiumServices() {
     const body = $('fsWizardV2Body');
-    if (!body || body.dataset.premiumServices === '1') return;
+    if (!body || q('.fs-v2-services-grid', body)) return;
     const heading = q('h2', body)?.textContent?.trim().toLowerCase();
     if (heading !== 'connect your media services') return;
 
@@ -254,7 +249,6 @@
     const lead = q('.fs-v2-lead', body);
     if (lead) lead.insertAdjacentElement('afterend', grid); else body.prepend(grid);
     if (guides.children.length) grid.insertAdjacentElement('afterend', guides);
-    body.dataset.premiumServices = '1';
   }
 
   function installVerifiedFinish() {
@@ -330,7 +324,6 @@
     inProgress.insertAdjacentElement('afterend', waiting);
     waiting.insertAdjacentElement('afterend', recent);
     waiting.querySelector('.fs-row')?.classList.remove('small');
-
     if (reviewWrap && reviewWrap !== panel) reviewWrap.style.display = 'none';
     return true;
   }
