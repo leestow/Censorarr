@@ -52,6 +52,15 @@
     document.head.appendChild(style);
   }
 
+  function removeDuplicateSubtitleIntegration() {
+    const box = document.getElementById('fsIntegrations');
+    if (!box) return;
+    for (const card of box.querySelectorAll('.fs-int')) {
+      const name = card.querySelector('.fs-int-name')?.textContent?.trim().toLowerCase();
+      if (name === 'subtitles') card.remove();
+    }
+  }
+
   function catalogItem(kind, id) {
     const wanted = Number(id);
     const catalogKind = kind === 'series' ? 'series' : 'movies';
@@ -262,6 +271,7 @@
   function apply() {
     applyBrand();
     applySidebarAlignment();
+    removeDuplicateSubtitleIntegration();
     installFastMediaDetails();
   }
 
