@@ -135,16 +135,38 @@
     modern.style.visibility=legacy.classList.contains('hidden')?'hidden':'visible';
   }
 
+  function guardFinish(){
+    const button=$('fsWizardFinish');if(!button||button.dataset.finishGuard==='1')return;
+    button.dataset.finishGuard='1';
+    button.addEventListener('click',()=>{
+      const started=Date.now();
+      const timer=setInterval(()=>{
+        const legacy=String($('wFinishStatus')?.textContent||'').trim();
+        const notice=$('fsWizardNotice');
+        if(/^Could not finish setup:/i.test(legacy)){
+          if(notice){notice.textContent=legacy;notice.classList.add('bad')}
+          button.disabled=false;clearInterval(timer);return;
+        }
+        if(/setup complete/i.test(legacy)){
+          if(notice){notice.textContent=legacy;notice.classList.remove('bad')}
+          clearInterval(timer);return;
+        }
+        if(Date.now()-started>60000)clearInterval(timer);
+      },200);
+    });
+  }
+
   function boot(){
-    addStyles();enrichGuides();enrichSettings();syncFirstRunClose();
+    addStyles();enrichGuides();enrichSettings();syncFirstRunClose();guardFinish();
     const legacyClose=$('wizardCloseBtn');if(legacyClose)new MutationObserver(syncFirstRunClose).observe(legacyClose,{attributes:true,attributeFilter:['class']});
     new MutationObserver(muts=>{
-      let settings=false,guides=false;
+      let settings=false,guides=false,wizard=false;
       for(const m of muts)for(const node of m.addedNodes)if(node instanceof Element){
         if(node.matches?.('.fsw-guide')||node.querySelector?.('.fsw-guide'))guides=true;
         if(node.matches?.('.settings-page,.field')||node.querySelector?.('.settings-page,.field'))settings=true;
+        if(node.id==='fsWizardFinish'||node.querySelector?.('#fsWizardFinish'))wizard=true;
       }
-      if(guides)enrichGuides();if(settings)enrichSettings();syncFirstRunClose();
+      if(guides)enrichGuides();if(settings)enrichSettings();if(wizard)guardFinish();syncFirstRunClose();
     }).observe(document.body,{childList:true,subtree:true});
   }
 
