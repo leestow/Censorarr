@@ -291,7 +291,11 @@ def install(app, core) -> None:
         js = core.STATIC / "ui-setup-wizard-v2.js"
         if not js.is_file():
             raise HTTPException(404, "Setup Wizard script not found")
-        return Response(js.read_text(encoding="utf-8"), media_type="application/javascript", headers={"Cache-Control": "no-cache"})
+        content = js.read_text(encoding="utf-8")
+        fixes = core.STATIC / "ui-setup-wizard-v2-fixes.js"
+        if fixes.is_file():
+            content += "\n\n/* Setup Wizard rerun + daylight fixes */\n" + fixes.read_text(encoding="utf-8")
+        return Response(content, media_type="application/javascript", headers={"Cache-Control": "no-cache"})
 
     @app.get("/dialogue-enhancement.js", include_in_schema=False)
     def dialogue_script(_: bool = Depends(core.auth)):
@@ -336,7 +340,7 @@ def install(app, core) -> None:
             "\n\n/* Isolated Setup Wizard loader. The wizard is a separate script request so a "
             "wizard parse/runtime error cannot prevent the main Censorarr UI bundle from loading. */\n"
             "(()=>{try{const s=document.createElement('script');"
-            "s.src='/setup-wizard-v2.js?v=3';s.async=false;"
+            "s.src='/setup-wizard-v2.js?v=4';s.async=false;"
             "s.onerror=()=>console.warn('Setup Wizard could not load');"
             "document.head.appendChild(s)}catch(e){console.warn('Setup Wizard loader failed',e)}})();\n"
         )
