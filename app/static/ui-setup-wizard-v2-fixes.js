@@ -4,13 +4,19 @@
   window.__censorarrSetupWizardV2Fixes = true;
 
   const $ = id => document.getElementById(id);
-  const q = sel => document.querySelector(sel);
+  const q = (sel, root=document) => root.querySelector(sel);
+  const qa = (sel, root=document) => Array.from(root.querySelectorAll(sel));
 
   function addStyles() {
     if ($('fsWizardV2DaylightStyles')) return;
     const style = document.createElement('style');
     style.id = 'fsWizardV2DaylightStyles';
     style.textContent = `
+      /* General Settings must only use its special grid while it is the ACTIVE settings page.
+         The previous broad !important rule caused General to stay visible over every submenu. */
+      .settings-page[data-settings="general"].fs-general-organized:not(.active){display:none!important}
+      .settings-page[data-settings="general"].fs-general-organized.active{display:grid!important}
+
       /* Daylight follows Censorarr's content theme. Keep the wizard header and step rail
          dark, just like the app keeps its top bar and sidebar unchanged. */
       #setupModal.fs-v2-daylight>.dialog.setup-dialog{background:#f3f7fb!important;border-color:#cbdde7!important}
@@ -45,6 +51,40 @@
       #setupModal.fs-v2-daylight .fs-v2-back{background:#fff!important;color:#29485d!important;border-color:#c7d9e3!important}
       #setupModal.fs-v2-daylight .fs-v2-notice{color:#17865d!important}
       #setupModal.fs-v2-daylight .fs-v2-notice.bad{color:#c83e3e!important}
+
+      /* Premium media-service cards. */
+      .fs-v2-services-grid{display:grid;grid-template-columns:repeat(4,minmax(185px,1fr));gap:12px;margin:14px 0}
+      .fs-v2-service-card{margin:0!important;padding:14px!important;display:flex;flex-direction:column;min-width:0;background:linear-gradient(145deg,#0a2433,#091c29)!important;border:1px solid #24485b!important;box-shadow:0 8px 24px rgba(0,0,0,.16)}
+      .fs-v2-service-head{display:grid;grid-template-columns:42px minmax(0,1fr) auto;gap:10px;align-items:center;margin-bottom:12px}
+      .fs-v2-service-logo{width:42px;height:42px;border-radius:9px;display:grid;place-items:center;background:#0d3041;border:1px solid #285265;padding:6px}
+      .fs-v2-service-logo img{display:block;max-width:100%;max-height:100%;object-fit:contain}
+      .fs-v2-service-title{font-size:14px;font-weight:850;color:#f0f8fb;line-height:1.2}
+      .fs-v2-service-sub{margin-top:2px;font-size:9px;color:#88a7b5}
+      .fs-v2-service-badge{font-size:9px;font-weight:800;padding:4px 7px;border-radius:5px;color:#80d8a6;background:#123d2c;border:1px solid #235d42;white-space:nowrap}
+      .fs-v2-service-badge.skipped{color:#9bb0ba;background:#142b36;border-color:#31505d}
+      .fs-v2-service-badge.connected{color:#b8f2ca;background:#174b31;border-color:#2c7750}
+      .fs-v2-service-card>h3,.fs-v2-service-card>p{display:none!important}
+      .fs-v2-service-card .fs-v2-grid2{grid-template-columns:1fr!important;gap:9px!important}
+      .fs-v2-service-card .fs-v2-field label{font-size:9px!important}
+      .fs-v2-service-card .fs-v2-input{height:34px!important;font-size:10px!important}
+      .fs-v2-service-card .fs-v2-test{display:grid;grid-template-columns:1fr;gap:5px;margin-top:auto;padding-top:10px}
+      .fs-v2-service-card .fs-v2-test button{width:100%;background:#1856be!important;border-color:#2c72de!important;color:#fff!important;font-weight:800}
+      .fs-v2-service-card .fs-v2-status{margin:0;min-height:14px;line-height:1.3}
+      .fs-v2-service-skipped-copy{margin:auto 0;color:#8da6b2;font-size:10px;line-height:1.5}
+      .fs-v2-service-guides{border:1px solid #1d4556;border-radius:8px;overflow:hidden;margin-top:12px}
+      .fs-v2-service-guides .fs-v2-guide{margin:0!important;padding:0!important;border:0!important;border-bottom:1px solid #1d4556!important;background:#09202d}
+      .fs-v2-service-guides .fs-v2-guide:last-child{border-bottom:0!important}
+      .fs-v2-service-guides .fs-v2-guide summary{padding:11px 13px!important;display:flex;align-items:center;gap:8px;color:#72b6ff!important}
+      .fs-v2-service-guides .fs-v2-guide ol,.fs-v2-service-guides .fs-v2-guide img{margin-left:13px;margin-right:13px}
+      .fs-v2-service-guides .fs-v2-guide img{margin-bottom:13px;max-width:calc(100% - 26px)}
+      #setupModal.fs-v2-daylight .fs-v2-service-card{background:#fff!important;border-color:#ccdce6!important;box-shadow:0 5px 18px rgba(41,67,84,.08)!important}
+      #setupModal.fs-v2-daylight .fs-v2-service-logo{background:#f3f7fa!important;border-color:#d3e1e9!important}
+      #setupModal.fs-v2-daylight .fs-v2-service-title{color:#142435!important}
+      #setupModal.fs-v2-daylight .fs-v2-service-sub{color:#6d8392!important}
+      #setupModal.fs-v2-daylight .fs-v2-service-guides{border-color:#d4e1e9!important}
+      #setupModal.fs-v2-daylight .fs-v2-service-guides .fs-v2-guide{background:#fff!important;border-color:#d4e1e9!important}
+      @media(max-width:1250px){.fs-v2-services-grid{grid-template-columns:repeat(2,minmax(220px,1fr))}}
+      @media(max-width:760px){.fs-v2-services-grid{grid-template-columns:1fr}}
     `;
     document.head.appendChild(style);
   }
@@ -108,6 +148,115 @@
     if (mismatches.length) throw new Error(`Saved settings did not verify: ${mismatches.join(', ')}`);
   }
 
+  async function refreshAudioFeatureUi() {
+    const state = await jsonRequest('/api/dialogue-enhancement/settings', {cache:'no-store'});
+    const profanity = state.profanity_censoring_enabled !== false;
+    const dialogue = !!state.enabled;
+    qa('.fsProfanityToggle').forEach(x => { x.checked = profanity; });
+    qa('.fsDialogueToggle').forEach(x => { x.checked = dialogue; });
+    qa('[data-feature-card="profanity"]').forEach(card => {
+      card.classList.toggle('on', profanity);
+      const stateEl = q('.fs-feature-state', card);
+      if (stateEl) stateEl.textContent = profanity ? 'ON' : 'OFF';
+    });
+    qa('[data-feature-card="dialogue"]').forEach(card => {
+      card.classList.toggle('on', dialogue);
+      const stateEl = q('.fs-feature-state', card);
+      if (stateEl) stateEl.textContent = dialogue ? 'ON' : 'OFF';
+    });
+    const oldDialogue = $('sDialogueEnabled');
+    if (oldDialogue) oldDialogue.value = String(dialogue);
+    qa('.fs-feature-save-state').forEach(x => {
+      x.textContent = 'Updated from Setup Wizard.';
+      x.classList.add('good');
+      x.classList.remove('bad');
+    });
+  }
+
+  const SERVICE_META = {
+    Plex:   {kind:'plex',   logo:'/assets/plex.svg',   desc:'Media server'},
+    Radarr: {kind:'radarr', logo:'/assets/radarr.svg', desc:'Movie management'},
+    Sonarr: {kind:'sonarr', logo:'/assets/sonarr.svg', desc:'TV management'},
+    Bazarr: {kind:'bazarr', logo:'/assets/bazarr.svg', desc:'Subtitle management'}
+  };
+
+  function updateServiceBadge(card) {
+    const badge = q('.fs-v2-service-badge', card);
+    if (!badge) return;
+    const text = q('.fs-v2-status', card)?.textContent?.trim() || '';
+    if (/connected|responding|test complete/i.test(text)) {
+      badge.textContent = 'Connected';
+      badge.classList.add('connected');
+      badge.classList.remove('skipped');
+      return;
+    }
+    if (card.dataset.serviceSkipped === '1') {
+      badge.textContent = 'Skipped';
+      badge.classList.add('skipped');
+      badge.classList.remove('connected');
+      return;
+    }
+    const url = q('input[data-mirror$="Url"]', card)?.value?.trim();
+    badge.textContent = url ? 'Configured' : 'Needs setup';
+    badge.classList.remove('skipped','connected');
+  }
+
+  function decoratePremiumServices() {
+    const body = $('fsWizardV2Body');
+    if (!body || body.dataset.premiumServices === '1') return;
+    const heading = q('h2', body)?.textContent?.trim().toLowerCase();
+    if (heading !== 'connect your media services') return;
+
+    const sections = qa(':scope > .fs-v2-section', body).filter(section => SERVICE_META[q('h3', section)?.textContent?.trim()]);
+    if (!sections.length) return;
+
+    const grid = document.createElement('div');
+    grid.className = 'fs-v2-services-grid';
+    const guides = document.createElement('div');
+    guides.className = 'fs-v2-service-guides';
+
+    for (const section of sections) {
+      const title = q('h3', section)?.textContent?.trim();
+      const meta = SERVICE_META[title];
+      if (!meta) continue;
+      const skipped = /Skipped based on your Usage answers/i.test(section.textContent || '');
+      section.classList.add('fs-v2-service-card');
+      section.dataset.serviceKind = meta.kind;
+      section.dataset.serviceSkipped = skipped ? '1' : '0';
+
+      const head = document.createElement('div');
+      head.className = 'fs-v2-service-head';
+      head.innerHTML = `<div class="fs-v2-service-logo"><img src="${meta.logo}" alt=""></div><div><div class="fs-v2-service-title">${title}</div><div class="fs-v2-service-sub">${meta.desc}</div></div><span class="fs-v2-service-badge"></span>`;
+      section.prepend(head);
+
+      if (skipped) {
+        const p = q(':scope > p', section);
+        const copy = document.createElement('div');
+        copy.className = 'fs-v2-service-skipped-copy';
+        copy.textContent = 'Skipped based on your Usage answers. You can enable it later from Settings.';
+        if (p) p.insertAdjacentElement('afterend', copy); else section.appendChild(copy);
+      }
+
+      const guide = q(':scope > .fs-v2-guide', section);
+      if (guide) {
+        const summary = q('summary', guide);
+        if (summary) summary.textContent = `${title} — show me exactly where to get this`;
+        guides.appendChild(guide);
+      }
+
+      const status = q('.fs-v2-status', section);
+      if (status) new MutationObserver(() => updateServiceBadge(section)).observe(status, {childList:true,subtree:true,characterData:true});
+      qa('input', section).forEach(input => input.addEventListener('input', () => updateServiceBadge(section)));
+      updateServiceBadge(section);
+      grid.appendChild(section);
+    }
+
+    const lead = q('.fs-v2-lead', body);
+    if (lead) lead.insertAdjacentElement('afterend', grid); else body.prepend(grid);
+    if (guides.children.length) grid.insertAdjacentElement('afterend', guides);
+    body.dataset.premiumServices = '1';
+  }
+
   function installVerifiedFinish() {
     if (window.finishSetupWizard?.__fsVerifiedSave) return;
     const replacement = async function() {
@@ -128,17 +277,19 @@
           throw new Error(message);
         }
         const complete = await jsonRequest('/api/setup/complete', {method:'POST', body:'{}'});
+        await refreshAudioFeatureUi();
         showFinishStatus(complete.message || 'Setup complete. Your changes were saved.');
         try { WIZARD_FIRST_RUN = false; } catch (_) {}
-        setTimeout(() => {
+        setTimeout(async () => {
           const modal = $('setupModal');
           modal?.classList.remove('open','fs-v2-open');
           if (legacyButton) legacyButton.disabled = false;
           if (v2Button) v2Button.disabled = false;
-          try { window.loadSettings?.(); } catch (_) {}
+          try { await window.loadSettings?.(); } catch (_) {}
+          try { await refreshAudioFeatureUi(); } catch (_) {}
           try { window.refresh?.(); } catch (_) {}
           try { window.refreshGpuStatus?.(); } catch (_) {}
-        }, 450);
+        }, 350);
         return complete;
       } catch (err) {
         if (legacyButton) legacyButton.disabled = false;
@@ -159,6 +310,7 @@
       resetFinishButton();
       applyTheme();
       installVerifiedFinish();
+      setTimeout(decoratePremiumServices, 0);
       return result;
     };
     wrapped.__fsV2FinishReset = true;
@@ -179,8 +331,6 @@
     waiting.insertAdjacentElement('afterend', recent);
     waiting.querySelector('.fs-row')?.classList.remove('small');
 
-    // Review mode is retired from the family-safe overview. Keep the hidden DOM node
-    // available to older render/wiring code so it cannot break the other dashboard rows.
     if (reviewWrap && reviewWrap !== panel) reviewWrap.style.display = 'none';
     return true;
   }
@@ -199,11 +349,18 @@
     const wrap = q('.wrap');
     if (wrap) new MutationObserver(applyTheme).observe(wrap, {attributes:true, attributeFilter:['class']});
 
+    const body = $('fsWizardV2Body');
+    if (body) {
+      new MutationObserver(() => setTimeout(decoratePremiumServices, 0)).observe(body, {childList:true,subtree:false});
+      setTimeout(decoratePremiumServices, 0);
+    }
+
     const modal = $('setupModal');
     if (modal) {
       new MutationObserver(() => {
         if (modal.classList.contains('open')) resetFinishButton();
         applyTheme();
+        setTimeout(decoratePremiumServices, 0);
       }).observe(modal, {attributes:true, attributeFilter:['class']});
     }
   }
