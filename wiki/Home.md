@@ -1,6 +1,6 @@
 # Censorarr Wiki
 
-**Applies to Censorarr 1.6.5**
+**Applies to Censorarr 1.6.9**
 
 Censorarr is a self-hosted clean-audio manager for movies and TV shows. It scans media, transcribes dialogue, detects configured profanity, and can add a separate **English - CLEAN** audio track while preserving the original audio streams.
 
