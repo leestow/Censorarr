@@ -17,7 +17,7 @@ import automation_audio_sources
 import fast_metadata_cache
 from dialogue_enhancement import DEFAULTS
 
-DEV_VERSION = "1.6.8-dev"
+DEV_VERSION = "1.6.9"
 WIKI_REPO = "leestow/Censorarr"
 WIKI_BRANCH = "family-safe-media"
 WIKI_TTL_SECONDS = 6 * 3600
@@ -104,7 +104,7 @@ def install(app, core) -> None:
                 return
             tmp = path.with_suffix(".tmp")
             tmp.write_text(core.yaml.safe_dump(raw_cfg, sort_keys=False), encoding="utf-8")
-            os.replace(tmp, path)
+            os.replace(tmp, core.CONFIG)
         except Exception as exc:
             core.pc.logging.warning("Could not migrate family-safe processing settings: %s", exc)
 
