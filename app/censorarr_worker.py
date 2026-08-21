@@ -18,7 +18,7 @@ import manual_processing
 import plex_metadata_cache
 import worker_preflight_guard
 
-VERSION = "1.6.8-dev"
+VERSION = "1.6.9"
 pc.VERSION = VERSION
 pc.DEFAULT_CONFIG.setdefault("safety", {})["ensure_readable_output"] = True
 
@@ -65,7 +65,7 @@ def preserve_processed_media_metadata(src_stat, temp_out: Path, cfg: dict) -> No
         try:
             target_mode = temp_out.stat().st_mode & 0o7777
         except OSError as exc:
-            pc.logging.warning("Could not read output permissions for %s: %s", temp_out, exc)
+            pc.logging.warning("Could not read output permissions on %s: %s", temp_out, exc)
             return
 
     if ensure_readable_output:
