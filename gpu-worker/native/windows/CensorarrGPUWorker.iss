@@ -5,10 +5,10 @@
 #define MyAppVersion GetEnv("CENSORARR_APP_VERSION")
 #define MyFileVersion GetEnv("CENSORARR_FILE_VERSION")
 #if MyAppVersion == ""
-  #define MyAppVersion "1.6.5"
+  #define MyAppVersion "1.6.9"
 #endif
 #if MyFileVersion == ""
-  #define MyFileVersion "1.6.5.0"
+  #define MyFileVersion "1.6.9.0"
 #endif
 
 [Setup]
