@@ -16,6 +16,7 @@ from fastapi import Depends, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse, Response
 
 import dialogue_web
+import live_mute
 import updater
 import webapp_core as core
 
@@ -89,6 +90,7 @@ app = core.app
 # Development-only APIs/settings. This also marks the updater platform as development
 # so stable self-update can never overwrite the feature checkout.
 dialogue_web.install(app, core)
+live_mute.install(app, core)
 
 
 def _configured_media_roots() -> list[Path]:
@@ -424,6 +426,7 @@ html.censorarr-first-paint .app-shell{visibility:hidden!important}
     injection = r'''<script src="/folder-picker.js?v=2"></script>
 <script src="/updater.js?v=2"></script>
 <script src="/dialogue-enhancement.js?v=1"></script>
+<script src="/live-mute.js?v=1"></script>
 <script>
 window.reprocess = async function(path) {
   if (!confirm('Force reprocess ' + basename(path) + '? Existing CLEAN will be replaced, not duplicated.')) return;
