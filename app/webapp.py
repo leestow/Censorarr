@@ -396,7 +396,8 @@ for route in list(app.router.routes):
 def index_with_folder_picker(_: bool = Depends(core.auth)):
     html = (core.STATIC / "index.html").read_text(encoding="utf-8")
     first_paint_guard = r'''<style>
-html.censorarr-first-paint #dashboardPane{visibility:hidden!important}
+html,body{background:#07131f!important}
+html.censorarr-first-paint .app-shell{visibility:hidden!important}
 </style>
 <script>
 (function(){
@@ -421,7 +422,7 @@ html.censorarr-first-paint #dashboardPane{visibility:hidden!important}
     if 'censorarr-first-paint' not in html:
         html = html.replace("<head>", "<head>\n" + first_paint_guard, 1)
     injection = r'''<script src="/folder-picker.js?v=2"></script>
-<script src="/updater.js?v=1"></script>
+<script src="/updater.js?v=2"></script>
 <script src="/dialogue-enhancement.js?v=1"></script>
 <script>
 window.reprocess = async function(path) {
