@@ -491,16 +491,31 @@ def install(app, core) -> None:
         if not timeline:
             raise HTTPException(409, f"Could not read the Plex player timeline for {session.get('player')}")
         volume = timeline.get("volume")
+        restore_source = "reported"
         if volume is None:
-            raise HTTPException(409, "This Plex client did not report its current volume, so Censorarr refused to change it")
+            if settings["require_volume_probe"]:
+                raise HTTPException(
+                    409,
+                    "This Plex client does not report its volume. For NVIDIA Shield/Android TV compatibility, uncheck "
+                    "'Only mute when the current Plex volume can be read and safely restored', save Live Mute settings, "
+                    "then run this test again. Censorarr will restore the Plex player to the configured fallback level."
+                )
+            volume = settings["fallback_restore_volume"]
+            restore_source = "fallback"
         if int(volume) <= 0:
-            raise HTTPException(409, "The Plex client is already muted")
+            raise HTTPException(409, "The Plex client restore volume is 0, so Censorarr refused to run the mute test")
         if not _set_volume(session, cfg, 0, str(timeline.get("base") or "")):
             raise HTTPException(409, "The Plex client rejected the test mute command")
         time.sleep(0.8)
         if not _set_volume(session, cfg, int(volume), str(timeline.get("base") or "")):
             raise HTTPException(500, f"Test mute worked, but Censorarr could not restore volume {volume}. Restore it manually before continuing.")
-        return {"ok": True, "player": session.get("player"), "user": session.get("user"), "restored_volume": int(volume)}
+        return {
+            "ok": True,
+            "player": session.get("player"),
+            "user": session.get("user"),
+            "restored_volume": int(volume),
+            "restore_source": restore_source,
+        }
 
     @app.get("/live-mute.js", include_in_schema=False)
     def live_mute_script(_: bool = Depends(core.auth)):
