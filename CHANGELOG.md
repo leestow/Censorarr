@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.6.9
+
+- Promoted the current family-safe development checkpoint into the 1.6.9 release line.
+- Added the expanded Family Safe Media interface and supporting media-management improvements developed on `family-safe-media`.
+- Added Dialogue Enhancement support and the AI-capable GPU-worker path while retaining the existing CLEAN profanity workflow.
+- Added the experimental Plex Live Mute controls for testing timestamp-driven profanity filtering without replacing the existing CLEAN-track workflow.
+- Updated application, Docker/Synology worker, GPU worker, installer metadata, README, install notes, and Wiki current-version labels to 1.6.9.
+
 ## 1.6.8
 
 - Added automatic stable-release checks against GitHub Releases. When a newer Censorarr version is available, the web UI shows an update banner with the installed version, newest version, release-notes link, and install capability.
