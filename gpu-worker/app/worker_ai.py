@@ -17,7 +17,7 @@ import dialogue_ai
 import worker as base
 
 
-VERSION = "1.6.8-ai-dev"
+VERSION = "1.6.9"
 base.VERSION = VERSION
 
 # Preserve the stable ASR worker while teaching its shared status/cancel machinery about
