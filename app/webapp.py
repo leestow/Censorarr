@@ -395,6 +395,31 @@ for route in list(app.router.routes):
 @app.get("/", response_class=HTMLResponse, include_in_schema=False)
 def index_with_folder_picker(_: bool = Depends(core.auth)):
     html = (core.STATIC / "index.html").read_text(encoding="utf-8")
+    first_paint_guard = r'''<style>
+html.censorarr-first-paint #dashboardPane{visibility:hidden!important}
+</style>
+<script>
+(function(){
+  var root=document.documentElement;
+  root.classList.add('censorarr-first-paint');
+  var fallback=setTimeout(function(){root.classList.remove('censorarr-first-paint');},4000);
+  function reveal(){
+    if(!document.getElementById('fsDashboard'))return false;
+    clearTimeout(fallback);
+    root.classList.remove('censorarr-first-paint');
+    return true;
+  }
+  function watch(){
+    if(reveal())return;
+    var observer=new MutationObserver(function(){if(reveal())observer.disconnect();});
+    observer.observe(document.body||document.documentElement,{childList:true,subtree:true});
+  }
+  if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',watch,{once:true});
+  else watch();
+})();
+</script>'''
+    if 'censorarr-first-paint' not in html:
+        html = html.replace("<head>", "<head>\n" + first_paint_guard, 1)
     injection = r'''<script src="/folder-picker.js?v=2"></script>
 <script src="/updater.js?v=1"></script>
 <script src="/dialogue-enhancement.js?v=1"></script>
