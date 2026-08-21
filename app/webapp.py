@@ -20,7 +20,7 @@ import live_mute
 import updater
 import webapp_core as core
 
-VERSION = "1.6.8"
+VERSION = "1.6.9"
 core.VERSION = VERSION
 core.pc.VERSION = VERSION
 core.pc.DEFAULT_CONFIG.setdefault("safety", {})["ensure_readable_output"] = True
@@ -51,7 +51,7 @@ def _preserve_processed_media_metadata(src_stat, temp_out: Path, cfg: dict) -> N
         try:
             target_mode = temp_out.stat().st_mode & 0o7777
         except OSError as exc:
-            core.pc.logging.warning("Could not read output permissions for %s: %s", temp_out, exc)
+            core.pc.logging.warning("Could not read output permissions on %s: %s", temp_out, exc)
             return
 
     if ensure_readable_output:
