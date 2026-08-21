@@ -1,4 +1,4 @@
-# Censorarr 1.6.5 source notes
+# Censorarr 1.6.9 source notes
 
 - `app/censorarr.py` — Movies/TV watcher, rating gates, Whisper/fuzzy rescue, subtitle-assisted rescue, review apply, safe remux/validation, markers/state, and effective profanity dictionary.
 - `app/webapp.py` — FastAPI web manager and REST endpoints.
@@ -9,7 +9,7 @@
 - `gpu-worker/app/worker.py` — optional NVIDIA Faster-Whisper worker with bounded long-audio chunking.
 
 
-Synology permission compatibility (v1.6.5):
+Synology permission compatibility (introduced in v1.6.5; current in v1.6.9):
 - CENSORARR_SYNOLOGY_COMPAT_MODE=auto is recommended for DSM Container Manager.
 - auto uses PUID/PGID normally and falls back to container root only if DSM ACLs block that identity from a media mount while root can access it.
 - false forbids root fallback; true always uses container root.
