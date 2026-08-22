@@ -12,7 +12,7 @@ REPORT_DIR="${CENSORARR_REPORT_DIR:-$CENSORARR_ROOT/config/reports}"
 ALLOWLIST="${CENSORARR_STREAM_FILTER_ALLOWLIST:-$CENSORARR_ROOT/config/stream-filter-allowlist.txt}"
 LOG="${CENSORARR_STREAM_FILTER_LOG:-$CENSORARR_ROOT/work/plex-transcoder-shim.log}"
 RUNTIME_CONFIG="$PLEX_DIR/Censorarr Stream Filter.json"
-TARGET_MEDIA="${CENSORARR_TARGET_MEDIA:-Beverly.Hills.Cop.II.1987.REMASTERED.BluRay.10Bit.1080p.DD.5.1.H265-d3g.mkv}"
+TARGET_MEDIA="${CENSORARR_TARGET_MEDIA:-}"
 
 if [ "$(id -u)" != "0" ]; then
   echo "ERROR: run as root"
@@ -54,7 +54,12 @@ if ! "$PROBE" -hide_banner -filters 2>&1 | grep -Eq '(^|[[:space:]])volume([[:sp
 fi
 
 mkdir -p "$CENSORARR_ROOT/config" "$CENSORARR_ROOT/work" "$REPORT_DIR"
-printf '%s\n' "$TARGET_MEDIA" > "$ALLOWLIST"
+if [ ! -f "$ALLOWLIST" ]; then
+  : > "$ALLOWLIST"
+fi
+if [ -n "$TARGET_MEDIA" ]; then
+  printf '%s\n' "$TARGET_MEDIA" > "$ALLOWLIST"
+fi
 
 # Plex runs under its own service UID. Synology installations frequently create
 # Docker project roots as mode 700, so readable files below them are still
@@ -74,10 +79,10 @@ touch "$LOG"
 chmod 666 "$LOG" 2>/dev/null || true
 
 # Critical preflight: actually drop privileges to the Plex service UID/GID and
-# prove that Plex can read the allowlist and find/parse the target report. This
-# catches POSIX/DSM ACL problems before the Plex Transcoder is replaced.
+# prove Plex can read the allowlist and report directory. If an allowlisted item
+# exists, also prove Plex can parse a matching report containing mute ranges.
 echo "Preflight: testing Censorarr data access as $PLEX_USER (uid=$PLEX_UID)..."
-"$PYTHON" - "$PLEX_UID" "$PLEX_GID" "$ALLOWLIST" "$REPORT_DIR" "$TARGET_MEDIA" <<'PY'
+"$PYTHON" - "$PLEX_UID" "$PLEX_GID" "$ALLOWLIST" "$REPORT_DIR" <<'PY'
 import json
 import os
 import sys
@@ -87,7 +92,6 @@ uid = int(sys.argv[1])
 gid = int(sys.argv[2])
 allowlist = Path(sys.argv[3])
 report_dir = Path(sys.argv[4])
-target = sys.argv[5].casefold()
 
 try:
     os.setgroups([])
@@ -101,14 +105,17 @@ try:
                if x.strip() and not x.lstrip().startswith("#")]
 except Exception as exc:
     raise SystemExit(f"ERROR: Plex cannot read allowlist: {exc}")
-if target and target not in {x.casefold() for x in allowed}:
-    raise SystemExit("ERROR: target media is not present in the Plex filter allowlist")
 
 try:
     candidates = list(report_dir.glob("*.json"))
 except Exception as exc:
     raise SystemExit(f"ERROR: Plex cannot list Censorarr reports: {exc}")
 
+if not allowed:
+    print(f"Preflight OK: allowlist readable; reports readable/listable ({len(candidates)} found); no media currently allowlisted")
+    raise SystemExit(0)
+
+target = allowed[0].casefold()
 match = None
 ranges = []
 for candidate in candidates:
@@ -122,14 +129,14 @@ for candidate in candidates:
         ranges = payload.get("mute_ranges") or []
         break
 if match is None:
-    raise SystemExit(f"ERROR: Plex could not read a matching Censorarr report for {sys.argv[5]}")
+    raise SystemExit(f"ERROR: Plex could not read a matching Censorarr report for allowlisted media: {allowed[0]}")
 if not ranges:
     raise SystemExit(f"ERROR: matching report has no mute ranges: {match}")
 print(f"Preflight OK: allowlist readable; report={match.name}; mute_ranges={len(ranges)}")
 PY
 
 # Store actual install paths beside Plex so the shim is portable across Synology
-# volumes and Docker directory names rather than depending on Lee's test paths.
+# volumes and Docker directory names rather than depending on one test layout.
 "$PYTHON" - "$RUNTIME_CONFIG" "$PLEX_REAL" "$REPORT_DIR" "$ALLOWLIST" "$LOG" <<'PY'
 import json
 import sys
@@ -197,8 +204,12 @@ echo "Allowlist:$ALLOWLIST"
 echo "Reports:  $REPORT_DIR"
 echo "Log:      $LOG"
 echo
-echo "Currently allowlisted:"
-echo "  $TARGET_MEDIA"
+echo "Current allowlist:"
+if [ -s "$ALLOWLIST" ]; then
+  sed 's/^/  /' "$ALLOWLIST"
+else
+  echo "  (empty - no media will be filtered until policy enables it)"
+fi
 echo
 echo "Rollback command:"
 echo "  sh $CENSORARR_ROOT/uninstall_synology_plex_stream_filter.sh"
