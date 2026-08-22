@@ -7,6 +7,7 @@ PLEX_REAL="$PLEX_DIR/Plex Transcoder.censorarr-real"
 CENSORARR_ROOT="/volume1/docker/censorarr-test"
 SHIM_SOURCE="$CENSORARR_ROOT/plex_transcoder_shim.py"
 ALLOWLIST="$CENSORARR_ROOT/config/stream-filter-allowlist.txt"
+LOG="$CENSORARR_ROOT/work/plex-transcoder-shim.log"
 TARGET_MEDIA="Beverly.Hills.Cop.II.1987.REMASTERED.BluRay.10Bit.1080p.DD.5.1.H265-d3g.mkv"
 
 if [ "$(id -u)" != "0" ]; then
@@ -44,6 +45,14 @@ fi
 
 mkdir -p "$CENSORARR_ROOT/config" "$CENSORARR_ROOT/work"
 printf '%s\n' "$TARGET_MEDIA" > "$ALLOWLIST"
+chmod 644 "$ALLOWLIST" 2>/dev/null || true
+
+# Plex runs as PlexMediaServer, not root. Pre-create a writable diagnostic log
+# so a missing log actually means the shim was not invoked rather than a simple
+# permissions failure. Keep the work directory traversable too.
+chmod 755 "$CENSORARR_ROOT/work" 2>/dev/null || true
+touch "$LOG"
+chmod 666 "$LOG" 2>/dev/null || true
 
 # Embed the discovered Python interpreter in the shebang so the Plex service does
 # not depend on PATH when it spawns the shim.
@@ -78,7 +87,7 @@ echo "Censorarr Plex stream-filter shim installed."
 echo "Original: $PLEX_REAL"
 echo "Shim:     $PLEX_BIN"
 echo "Allowlist:$ALLOWLIST"
-echo "Log:      $CENSORARR_ROOT/work/plex-transcoder-shim.log"
+echo "Log:      $LOG"
 echo
 echo "Only this file is currently filtered:"
 echo "  $TARGET_MEDIA"
