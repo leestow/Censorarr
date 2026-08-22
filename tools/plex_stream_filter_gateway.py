@@ -18,9 +18,9 @@ Plex Transcoder shim for profanity muting.
 
 For selected text subtitles, Plex Android TV may request burn-in even though
 Plex creates temp-0.srt. The policy proxy prevents the burn. This gateway then
-adds a WebVTT subtitle rendition to the HLS master playlist and serves WebVTT
-converted on demand from Plex's active temp-0.srt. Image/advanced subtitles are
-left alone.
+adds a WebVTT subtitle rendition to the HLS master playlist and serves normal
+segmented WebVTT converted on demand from Plex's active temp-0.srt.
+Image/advanced subtitles are left alone.
 """
 from __future__ import annotations
 
@@ -41,15 +41,13 @@ import plex_filtered_handoff_v5 as validated
 
 
 _SUBTITLE_PATH_RE = re.compile(
-    r"^/censorarr/subtitles/([^/]+)/(index\.m3u8|subtitle\.vtt)$", re.I
+    r"^/censorarr/subtitles/([^/]+)/(index\.m3u8|segment-(\d+)\.vtt)$", re.I
 )
 _SRT_TIME_RE = re.compile(
-    r"(?m)^(\d{1,3}:\d{2}:\d{2}),(\d{3})\s+-->\s+"
+    r"^(\d{1,3}:\d{2}:\d{2}),(\d{3})\s+-->\s+"
     r"(\d{1,3}:\d{2}:\d{2}),(\d{3})(.*)$"
 )
-_SRT_END_RE = re.compile(
-    r"-->\s*(\d{1,3}):(\d{2}):(\d{2})[,.](\d{3})"
-)
+_SUBTITLE_SEGMENT_SECONDS = 30.0
 
 
 def _query_values(target: str) -> dict[str, str]:
@@ -135,7 +133,8 @@ def _active_srt(state: v3.V3State, client_id: str) -> Path | None:
         srt = child / "temp-0.srt"
         try:
             if srt.is_file() and srt.stat().st_size > 0:
-                found.append((srt.stat().st_mtime, srt))
+                stat = srt.stat()
+                found.append((stat.st_mtime, srt))
         except OSError:
             continue
     if not found:
@@ -144,42 +143,85 @@ def _active_srt(state: v3.V3State, client_id: str) -> Path | None:
     return found[0][1]
 
 
-def _srt_to_webvtt(raw: str) -> tuple[str, float]:
+def _hms_seconds(value: str, millis: str) -> float:
+    hours, minutes, seconds = [int(piece) for piece in value.split(":", 2)]
+    return hours * 3600.0 + minutes * 60.0 + seconds + int(millis) / 1000.0
+
+
+def _parse_srt(raw: str) -> tuple[list[tuple[float, float, str]], float]:
     text = str(raw or "").lstrip("\ufeff").replace("\r\n", "\n").replace("\r", "\n")
-    text = _SRT_TIME_RE.sub(
-        lambda m: f"{m.group(1)}.{m.group(2)} --> {m.group(3)}.{m.group(4)}{m.group(5)}",
-        text,
-    )
+    cues: list[tuple[float, float, str]] = []
     max_end = 1.0
-    for match in _SRT_END_RE.finditer(raw):
-        try:
-            hours = int(match.group(1))
-            minutes = int(match.group(2))
-            seconds = int(match.group(3))
-            millis = int(match.group(4))
-        except ValueError:
+
+    for block in re.split(r"\n{2,}", text.strip()):
+        lines = block.splitlines()
+        timing_index = -1
+        timing_match = None
+        for idx, line in enumerate(lines):
+            match = _SRT_TIME_RE.match(line.strip())
+            if match:
+                timing_index = idx
+                timing_match = match
+                break
+        if timing_match is None:
             continue
-        max_end = max(
-            max_end,
-            hours * 3600.0 + minutes * 60.0 + seconds + millis / 1000.0,
+
+        try:
+            start = _hms_seconds(timing_match.group(1), timing_match.group(2))
+            end = _hms_seconds(timing_match.group(3), timing_match.group(4))
+        except (TypeError, ValueError):
+            continue
+        if end <= start:
+            continue
+
+        lines[timing_index] = (
+            f"{timing_match.group(1)}.{timing_match.group(2)} --> "
+            f"{timing_match.group(3)}.{timing_match.group(4)}{timing_match.group(5)}"
         )
-    return "WEBVTT\n\n" + text.lstrip(), max_end + 60.0
+        cue = "\n".join(lines).strip()
+        cues.append((start, end, cue))
+        max_end = max(max_end, end)
+
+    return cues, max_end
 
 
 def _subtitle_playlist(duration: float) -> bytes:
     length = max(1.0, float(duration))
-    target = max(1, int(math.ceil(length)))
-    text = (
-        "#EXTM3U\n"
-        "#EXT-X-VERSION:3\n"
-        "#EXT-X-PLAYLIST-TYPE:VOD\n"
-        f"#EXT-X-TARGETDURATION:{target}\n"
-        "#EXT-X-MEDIA-SEQUENCE:0\n"
-        f"#EXTINF:{length:.3f},\n"
-        "subtitle.vtt\n"
-        "#EXT-X-ENDLIST\n"
-    )
-    return text.encode("utf-8")
+    segment = _SUBTITLE_SEGMENT_SECONDS
+    count = max(1, int(math.ceil(length / segment)))
+    rows = [
+        "#EXTM3U",
+        "#EXT-X-VERSION:3",
+        f"#EXT-X-TARGETDURATION:{int(math.ceil(segment))}",
+        "#EXT-X-MEDIA-SEQUENCE:0",
+        "#EXT-X-PLAYLIST-TYPE:VOD",
+    ]
+    for index in range(count):
+        start = index * segment
+        seg_length = min(segment, max(0.001, length - start))
+        rows.append(f"#EXTINF:{seg_length:.3f},")
+        rows.append(f"segment-{index:05d}.vtt")
+    rows.append("#EXT-X-ENDLIST")
+    return ("\n".join(rows) + "\n").encode("utf-8")
+
+
+def _subtitle_segment(
+    cues: list[tuple[float, float, str]],
+    index: int,
+) -> bytes:
+    segment = _SUBTITLE_SEGMENT_SECONDS
+    start = max(0.0, float(index) * segment)
+    end = start + segment
+    selected = [cue for cue_start, cue_end, cue in cues if cue_start < end and cue_end > start]
+    rows = [
+        "WEBVTT",
+        "X-TIMESTAMP-MAP=LOCAL:00:00:00.000,MPEGTS:0",
+        "",
+    ]
+    if selected:
+        rows.append("\n\n".join(selected))
+        rows.append("")
+    return ("\n".join(rows) + "\n").encode("utf-8")
 
 
 def _inject_subtitle_master(payload: bytes, client_id: str) -> tuple[bytes, bool]:
@@ -232,6 +274,7 @@ class GatewayHandler(validated.V5Handler):
 
         client_id = unquote(match.group(1)).strip()
         leaf = match.group(2).casefold()
+        segment_index = match.group(3)
         srt = _active_srt(state, client_id)
         if srt is None:
             state.log(
@@ -243,7 +286,7 @@ class GatewayHandler(validated.V5Handler):
 
         try:
             raw = srt.read_text(encoding="utf-8", errors="replace")
-            webvtt, duration = _srt_to_webvtt(raw)
+            cues, duration = _parse_srt(raw)
         except OSError as exc:
             state.log(
                 "SUBTITLE_READ_FAIL client=%s session=%s error=%s"
@@ -261,8 +304,8 @@ class GatewayHandler(validated.V5Handler):
         if leaf == "index.m3u8":
             payload = _subtitle_playlist(duration)
             state.log(
-                "SUBTITLE_PLAYLIST client=%s session=%s source=%s bytes=%s"
-                % (self.client_address[0], client_id, srt.name, len(payload))
+                "SUBTITLE_PLAYLIST client=%s session=%s source=%s cues=%s bytes=%s"
+                % (self.client_address[0], client_id, srt.name, len(cues), len(payload))
             )
             _send_simple(
                 client,
@@ -273,10 +316,18 @@ class GatewayHandler(validated.V5Handler):
             )
             return True
 
-        payload = webvtt.encode("utf-8")
+        try:
+            index = int(segment_index or "-1")
+        except ValueError:
+            index = -1
+        if index < 0:
+            _send_simple(client, 404, "Not Found", "text/plain; charset=utf-8", b"")
+            return True
+
+        payload = _subtitle_segment(cues, index)
         state.log(
-            "SUBTITLE_VTT client=%s session=%s source=%s bytes=%s"
-            % (self.client_address[0], client_id, srt.name, len(payload))
+            "SUBTITLE_SEGMENT client=%s session=%s index=%s source=%s bytes=%s"
+            % (self.client_address[0], client_id, index, srt.name, len(payload))
         )
         _send_simple(
             client,
@@ -333,7 +384,7 @@ class GatewayHandler(validated.V5Handler):
                 payload, changed = _inject_subtitle_master(payload, client_id)
             if changed:
                 state.log(
-                    "SUBTITLE_MASTER_INJECT client=%s session=%s mode=webvtt"
+                    "SUBTITLE_MASTER_INJECT client=%s session=%s mode=webvtt-segmented"
                     % (self.client_address[0], client_id)
                 )
             else:
@@ -419,7 +470,7 @@ def main() -> int:
     server.state = state  # type: ignore[attr-defined]
     state.log(
         "START_GATEWAY listen=%s:%s policy=%s:%s plex=%s:%s tls=plex:%s allowlist=%s "
-        "directplay=reject-415 native_hls=yes video=copy audio=transcode text_subtitles=webvtt"
+        "directplay=reject-415 native_hls=yes video=copy audio=transcode text_subtitles=webvtt-segmented"
         % (
             args.listen_host,
             args.listen_port,
