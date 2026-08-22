@@ -85,17 +85,19 @@
   if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',boot,{once:true});else boot();
 })();
 
-/* GPU Worker status remains available on the dashboard and in Logs; avoid a duplicate sidebar destination. */
+/* Keep duplicate operational/configuration destinations out of the main sidebar. */
 (() => {
-  function removeGpuWorkerNav(){
-    document.querySelectorAll('[data-polish-action="gpu"], [data-final-action="gpu"]').forEach(el=>el.remove());
+  function removeDuplicateNav(){
+    document.querySelectorAll(
+      '[data-polish-action="gpu"], [data-final-action="gpu"], [data-polish-action="rules"], [data-final-action="rules"]'
+    ).forEach(el=>el.remove());
   }
   function boot(){
-    removeGpuWorkerNav();
+    removeDuplicateNav();
     const nav=document.querySelector('.side-nav');
-    if(nav)new MutationObserver(removeGpuWorkerNav).observe(nav,{childList:true,subtree:true});
-    setTimeout(removeGpuWorkerNav,500);
-    setTimeout(removeGpuWorkerNav,1500);
+    if(nav)new MutationObserver(removeDuplicateNav).observe(nav,{childList:true,subtree:true});
+    setTimeout(removeDuplicateNav,500);
+    setTimeout(removeDuplicateNav,1500);
   }
   if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',boot,{once:true});else boot();
 })();
