@@ -1,9 +1,10 @@
 #!/bin/sh
 set -eu
 
-PLEX_DIR="/volume1/@appstore/PlexMediaServer"
+PLEX_DIR="${CENSORARR_PLEX_DIR:-/volume1/@appstore/PlexMediaServer}"
 PLEX_BIN="$PLEX_DIR/Plex Transcoder"
 PLEX_REAL="$PLEX_DIR/Plex Transcoder.censorarr-real"
+RUNTIME_CONFIG="$PLEX_DIR/Censorarr Stream Filter.json"
 
 if [ "$(id -u)" != "0" ]; then
   echo "ERROR: run as root"
@@ -11,6 +12,7 @@ if [ "$(id -u)" != "0" ]; then
 fi
 
 if [ ! -f "$PLEX_REAL" ]; then
+  rm -f "$RUNTIME_CONFIG"
   echo "No Censorarr Plex Transcoder backup was found. Nothing to restore."
   exit 0
 fi
@@ -24,6 +26,7 @@ fi
 rm -f "$PLEX_BIN"
 mv "$PLEX_REAL" "$PLEX_BIN"
 chmod 755 "$PLEX_BIN"
+rm -f "$RUNTIME_CONFIG"
 
 if command -v synopkg >/dev/null 2>&1; then
   echo "Starting PlexMediaServer..."
