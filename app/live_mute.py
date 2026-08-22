@@ -28,6 +28,7 @@ _ORIGINAL_EVENT = _impl._event
 _SIMULATED_ACTIVE_KEYS: set[str] = set()
 _SIMULATED_RESTORE_EVENT_KEYS: set[str] = set()
 _EXTRA_ROUTES_INSTALLED = False
+_SIMULATION_RUNTIME = False
 
 
 def _first(value: Any) -> dict:
@@ -47,8 +48,10 @@ def _simulation_enabled(cfg: dict) -> bool:
 
 
 def _live_cfg(cfg: dict) -> dict[str, Any]:
+    global _SIMULATION_RUNTIME
     out = _ORIGINAL_LIVE_CFG(cfg)
     out["simulation_mode"] = _simulation_enabled(cfg)
+    _SIMULATION_RUNTIME = bool(out["simulation_mode"])
     # Simulation never needs a readable volume because no player command is sent.
     if out["simulation_mode"]:
         out["require_volume_probe"] = False
@@ -179,11 +182,12 @@ def _parse_sessions(cfg: dict) -> list[dict[str, Any]]:
     return out
 
 
-def _timeline(session: dict, token: str) -> dict[str, Any] | None:
-    timeline = _ORIGINAL_TIMELINE(session, token)
-    if timeline:
-        return timeline
+def _session_timeline(session: dict) -> dict[str, Any]:
+    """Fast position clock based on Plex /status/sessions viewOffset.
 
+    This is intentionally non-blocking. It is the simulation clock and the
+    fallback clock for clients that do not expose Plex Companion timeline polling.
+    """
     state = str(session.get("state") or "").lower()
     position = int(session.get("view_offset_ms") or 0)
     observed = float(session.get("observed_mono") or time.monotonic())
@@ -193,9 +197,22 @@ def _timeline(session: dict, token: str) -> dict[str, Any] | None:
         "time_ms": max(0, position),
         "state": state,
         "volume": None,
-        "controllable": "session-viewOffset-fallback",
+        "controllable": "simulation-viewOffset" if _SIMULATION_RUNTIME else "session-viewOffset-fallback",
         "base": "",
     }
+
+
+def _timeline(session: dict, token: str) -> dict[str, Any] | None:
+    # Simulation must never wait on Plex Companion ports. Those failed network
+    # probes can take longer than an entire profanity window and make the dry-run
+    # scheduler miss the event. Use the server session clock immediately instead.
+    if _SIMULATION_RUNTIME:
+        return _session_timeline(session)
+
+    timeline = _ORIGINAL_TIMELINE(session, token)
+    if timeline:
+        return timeline
+    return _session_timeline(session)
 
 
 _impl.DEFAULTS.setdefault("simulation_mode", False)
