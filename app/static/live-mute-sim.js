@@ -32,7 +32,7 @@
     const state=q('#lmSimulationState');
     if(state){
       state.textContent=sim
-        ? (settings.enabled?'ON — Plex volume will not be changed.':'ON, but Live Mute itself is currently disabled.')
+        ? (settings.enabled?'ON — simulation is armed; Plex volume will not be changed.':'ON, but Live Mute itself is currently disabled.')
         : 'OFF — normal Live Mute behavior.';
     }
     const test=q('#lmTest');
@@ -42,13 +42,8 @@
       if(sim)test.textContent='Player mute test disabled in Simulation Mode';
       else if(test.textContent==='Player mute test disabled in Simulation Mode')test.textContent='Test active Plex player (0.8 sec)';
     }
-    const pill=q('#lmLabPill');
-    const sessions=data.sessions||[];
-    const active=sessions.find(x=>String(x.state||'').toLowerCase()==='playing')||sessions[0];
-    if(sim&&pill){
-      pill.textContent=active?.muted?'SIM MUTE':(settings.enabled?'SIMULATION':'SIM OFF');
-      pill.className=active?.muted?'lm-live-pill muted':'lm-live-pill on';
-    }
+    // Do not write #lmLabPill here. The main Timing Lab owns that badge and
+    // refreshes it on its own cadence. Two writers caused ARMED/SIMULATION flicker.
   }
 
   async function save(){
