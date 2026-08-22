@@ -101,3 +101,40 @@
   }
   if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',boot,{once:true});else boot();
 })();
+
+/* Profanity List is configuration: move it under Settings directly after Detection. */
+(() => {
+  function moveProfanityNav(){
+    const nav=document.querySelector('.side-nav');
+    const settings=nav?.querySelector('.fs-settings-group');
+    if(!nav||!settings)return;
+
+    const selector='[data-polish-action="profanity"], [data-final-action="profanity"]';
+    const existing=settings.querySelector(selector);
+    const main=[...nav.querySelectorAll(selector)].find(el=>!el.closest('.fs-settings-group'));
+
+    if(existing){
+      if(main)main.remove();
+      return;
+    }
+    if(!main)return;
+
+    const sub=main.cloneNode(true);
+    sub.classList.add('sub');
+    sub.innerHTML='<span>Profanity List</span>';
+    const detection=settings.querySelector('[data-polish-action="settings:detection"], [data-final-action="settings:detection"]');
+    if(detection)detection.insertAdjacentElement('afterend',sub);
+    else settings.appendChild(sub);
+    main.remove();
+  }
+
+  function boot(){
+    moveProfanityNav();
+    const nav=document.querySelector('.side-nav');
+    if(nav)new MutationObserver(moveProfanityNav).observe(nav,{childList:true,subtree:true});
+    setTimeout(moveProfanityNav,500);
+    setTimeout(moveProfanityNav,1500);
+  }
+
+  if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',boot,{once:true});else boot();
+})();
