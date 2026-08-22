@@ -104,17 +104,7 @@ def _map_media_path(raw: str, media_type: str, cfg: dict) -> Path:
     return Path(normalized)
 
 
-def _report_for_media(media: Path, cfg: dict) -> tuple[str, list[tuple[int, int]]]:
-    if str(media) in {"", "."}:
-        return "", []
-    report_dir = Path((cfg.get("reports", {}) or {}).get("directory", "/config/reports"))
-    report = report_dir / (pc.report_name(media) + ".json")
-    if not report.is_file():
-        return str(report), []
-    try:
-        payload = json.loads(report.read_text(encoding="utf-8")) or {}
-    except Exception:
-        return str(report), []
+def _ranges_from_payload(payload: dict[str, Any]) -> list[tuple[int, int]]:
     ranges: list[tuple[int, int]] = []
     for row in payload.get("mute_ranges", []) or []:
         try:
@@ -125,7 +115,64 @@ def _report_for_media(media: Path, cfg: dict) -> tuple[str, list[tuple[int, int]
         if end > start:
             ranges.append((max(0, start), max(0, end)))
     ranges.sort()
-    return str(report), ranges
+    return ranges
+
+
+def _read_report(path: Path) -> dict[str, Any] | None:
+    if not path.is_file():
+        return None
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8")) or {}
+    except Exception:
+        return None
+    return payload if isinstance(payload, dict) else None
+
+
+def _report_for_media(media: Path, cfg: dict) -> tuple[str, list[tuple[int, int]]]:
+    if str(media) in {"", "."}:
+        return "", []
+    report_dir = Path((cfg.get("reports", {}) or {}).get("directory", "/config/reports"))
+    report = report_dir / (pc.report_name(media) + ".json")
+
+    # Normal/current lookup. Report names include a hash of the complete media path,
+    # so this is the fastest and safest match when the path has never changed.
+    payload = _read_report(report)
+    if payload is not None:
+        return str(report), _ranges_from_payload(payload)
+
+    # Older Censorarr installs, changed Docker mounts, or renamed library roots can leave
+    # a perfectly good report whose filename hash was generated from the OLD media path.
+    # Fall back only to reports whose stored source file has the exact same filename.
+    # This runs only when a Plex session first appears/media changes, not on every 50 ms loop.
+    wanted_name = media.name.casefold()
+    if not wanted_name or not report_dir.is_dir():
+        return str(report), []
+    try:
+        candidates = sorted(report_dir.glob("*.json"), key=lambda p: p.stat().st_mtime, reverse=True)
+    except OSError:
+        candidates = list(report_dir.glob("*.json"))
+    for candidate in candidates:
+        if candidate == report:
+            continue
+        candidate_payload = _read_report(candidate)
+        if candidate_payload is None:
+            continue
+        recorded_file = str(candidate_payload.get("file") or "").strip()
+        if not recorded_file:
+            continue
+        try:
+            recorded_name = Path(recorded_file).name.casefold()
+        except Exception:
+            continue
+        if recorded_name != wanted_name:
+            continue
+        ranges = _ranges_from_payload(candidate_payload)
+        logging.info(
+            "Live Mute matched legacy-path report for %s: current=%s report_source=%s report=%s ranges=%d",
+            media.name, media, recorded_file, candidate, len(ranges),
+        )
+        return str(candidate), ranges
+    return str(report), []
 
 
 def _parse_sessions(cfg: dict) -> list[dict[str, Any]]:
@@ -276,6 +323,13 @@ def _refresh_session(state: dict, session: dict, cfg: dict) -> None:
     state["session"] = session
     if str(session.get("local_file") or "") != old_file or "ranges" not in state:
         report, ranges = _report_for_media(Path(session.get("local_file") or ""), cfg)
+        report_found = bool(report and Path(report).is_file())
+        if ranges:
+            report_error = ""
+        elif report_found:
+            report_error = "Censorarr report found, but it contains no mute ranges"
+        else:
+            report_error = "No Censorarr mute-range report for this title"
         state.update({
             "report": report,
             "ranges": ranges,
@@ -283,7 +337,7 @@ def _refresh_session(state: dict, session: dict, cfg: dict) -> None:
             "timeline_time_ms": int(session.get("view_offset_ms") or 0),
             "timeline_mono": float(session.get("observed_mono") or time.monotonic()),
             "last_timeline_sync_mono": 0.0,
-            "last_error": "" if ranges else "No Censorarr mute-range report for this title",
+            "last_error": report_error,
         })
 
 
