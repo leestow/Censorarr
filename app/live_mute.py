@@ -27,6 +27,7 @@ _ORIGINAL_SET_VOLUME = _impl._set_volume
 _ORIGINAL_EVENT = _impl._event
 _SIMULATED_ACTIVE_KEYS: set[str] = set()
 _SIMULATED_RESTORE_EVENT_KEYS: set[str] = set()
+_SESSION_CLOCKS: dict[str, dict[str, Any]] = {}
 _EXTRA_ROUTES_INSTALLED = False
 _SIMULATION_RUNTIME = False
 
@@ -183,21 +184,56 @@ def _parse_sessions(cfg: dict) -> list[dict[str, Any]]:
 
 
 def _session_timeline(session: dict) -> dict[str, Any]:
-    """Fast position clock based on Plex /status/sessions viewOffset.
+    """Smooth clock built from Plex's coarse /status/sessions viewOffset samples.
 
-    This is intentionally non-blocking. It is the simulation clock and the
-    fallback clock for clients that do not expose Plex Companion timeline polling.
+    Some Plex clients only advance viewOffset every several seconds. Repeated identical
+    samples must NOT re-anchor the clock, otherwise a sub-second mute window can never
+    be crossed. We anchor once, advance with monotonic time, and only re-anchor when
+    Plex reports a genuinely new position or playback state (including seeks/pauses).
     """
+    now = time.monotonic()
+    observed = float(session.get("observed_mono") or now)
     state = str(session.get("state") or "").lower()
-    position = int(session.get("view_offset_ms") or 0)
-    observed = float(session.get("observed_mono") or time.monotonic())
+    server_position = max(0, int(session.get("view_offset_ms") or 0))
+    key = _session_key(session) or f"{session.get('player')}|{session.get('local_file')}"
+
+    clock = _SESSION_CLOCKS.get(key)
+    if clock is None:
+        clock = {
+            "server_position": server_position,
+            "server_state": state,
+            "anchor_position": server_position,
+            "anchor_mono": observed,
+            "last_seen_mono": now,
+        }
+        _SESSION_CLOCKS[key] = clock
+    else:
+        # A changed server sample is meaningful: normal Plex progress update, seek,
+        # pause/resume, or playback-state transition. Re-anchor only on that change.
+        if server_position != int(clock.get("server_position") or 0) or state != str(clock.get("server_state") or ""):
+            clock.update({
+                "server_position": server_position,
+                "server_state": state,
+                "anchor_position": server_position,
+                "anchor_mono": observed,
+            })
+        clock["last_seen_mono"] = now
+
+    position = int(clock.get("anchor_position") or 0)
     if state == "playing":
-        position += int(max(0.0, time.monotonic() - observed) * 1000)
+        position += int(max(0.0, now - float(clock.get("anchor_mono") or now)) * 1000)
+
+    # Opportunistic cleanup so abandoned Plex sessions do not accumulate forever.
+    if len(_SESSION_CLOCKS) > 64:
+        cutoff = now - 3600.0
+        for stale_key in [k for k, v in _SESSION_CLOCKS.items() if float(v.get("last_seen_mono") or 0) < cutoff]:
+            _SESSION_CLOCKS.pop(stale_key, None)
+
     return {
         "time_ms": max(0, position),
         "state": state,
         "volume": None,
-        "controllable": "simulation-viewOffset" if _SIMULATION_RUNTIME else "session-viewOffset-fallback",
+        "controllable": "simulation-viewOffset-smoothed" if _SIMULATION_RUNTIME else "session-viewOffset-smoothed",
         "base": "",
     }
 
@@ -205,7 +241,7 @@ def _session_timeline(session: dict) -> dict[str, Any]:
 def _timeline(session: dict, token: str) -> dict[str, Any] | None:
     # Simulation must never wait on Plex Companion ports. Those failed network
     # probes can take longer than an entire profanity window and make the dry-run
-    # scheduler miss the event. Use the server session clock immediately instead.
+    # scheduler miss the event. Use the smoothed server-session clock immediately.
     if _SIMULATION_RUNTIME:
         return _session_timeline(session)
 
