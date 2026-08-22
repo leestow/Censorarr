@@ -1,14 +1,16 @@
 #!/usr/bin/env python3
 """Standalone fail-open Plex Transcoder shim for Censorarr stream filtering.
 
-This script is intended to temporarily replace Plex's `Plex Transcoder` binary on
-Synology during development. The original binary must be renamed to
-`Plex Transcoder.censorarr-real` in the same directory.
+The installer temporarily places this script at Plex's `Plex Transcoder` path and
+renames the original binary to `Plex Transcoder.censorarr-real`.
 
 For explicitly allowlisted media only, the shim reads Censorarr report JSON files,
 converts saved mute ranges into an FFmpeg `volume` timeline expression, injects it
 into Plex's existing audio filter graph, and then `exec()`s the untouched original
 Plex Transcoder. Any parsing/rewrite failure falls open to the original argv.
+
+Runtime paths are supplied by a small installer-written JSON sidecar so Censorarr
+does not depend on one Synology volume or Docker directory layout.
 """
 from __future__ import annotations
 
@@ -20,27 +22,59 @@ import time
 from pathlib import Path
 from typing import Any, Iterable
 
-PLEX_REAL = Path(os.environ.get(
-    "CENSORARR_PLEX_REAL",
+CONFIG_PATH = Path(os.environ.get(
+    "CENSORARR_STREAM_FILTER_CONFIG",
+    "/volume1/@appstore/PlexMediaServer/Censorarr Stream Filter.json",
+))
+
+
+def _runtime_config() -> dict[str, Any]:
+    try:
+        payload = json.loads(CONFIG_PATH.read_text(encoding="utf-8")) or {}
+    except Exception:
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
+RUNTIME = _runtime_config()
+
+
+def _path_setting(env_name: str, config_name: str, default: str) -> Path:
+    raw = os.environ.get(env_name) or RUNTIME.get(config_name) or default
+    return Path(str(raw))
+
+
+def _int_setting(env_name: str, config_name: str, default: int) -> int:
+    raw = os.environ.get(env_name)
+    if raw is None:
+        raw = RUNTIME.get(config_name, default)
+    try:
+        return int(raw)
+    except (TypeError, ValueError):
+        return default
+
+
+PLEX_REAL = _path_setting(
+    "CENSORARR_PLEX_REAL", "plex_real",
     "/volume1/@appstore/PlexMediaServer/Plex Transcoder.censorarr-real",
-))
-REPORT_DIR = Path(os.environ.get(
-    "CENSORARR_REPORT_DIR",
+)
+REPORT_DIR = _path_setting(
+    "CENSORARR_REPORT_DIR", "report_dir",
     "/volume1/docker/censorarr-test/config/reports",
-))
-ALLOWLIST = Path(os.environ.get(
-    "CENSORARR_STREAM_FILTER_ALLOWLIST",
+)
+ALLOWLIST = _path_setting(
+    "CENSORARR_STREAM_FILTER_ALLOWLIST", "allowlist",
     "/volume1/docker/censorarr-test/config/stream-filter-allowlist.txt",
-))
-LOG_PATH = Path(os.environ.get(
-    "CENSORARR_STREAM_FILTER_LOG",
+)
+LOG_PATH = _path_setting(
+    "CENSORARR_STREAM_FILTER_LOG", "log",
     "/volume1/docker/censorarr-test/work/plex-transcoder-shim.log",
-))
+)
 FALLBACK_LOG_PATH = Path("/tmp/censorarr-plex-transcoder-shim.log")
 
-LEAD_MS = int(os.environ.get("CENSORARR_STREAM_FILTER_LEAD_MS", "35") or 35)
-TAIL_MS = int(os.environ.get("CENSORARR_STREAM_FILTER_TAIL_MS", "35") or 35)
-JOIN_GAP_MS = int(os.environ.get("CENSORARR_STREAM_FILTER_JOIN_GAP_MS", "20") or 20)
+LEAD_MS = _int_setting("CENSORARR_STREAM_FILTER_LEAD_MS", "lead_ms", 35)
+TAIL_MS = _int_setting("CENSORARR_STREAM_FILTER_TAIL_MS", "tail_ms", 35)
+JOIN_GAP_MS = _int_setting("CENSORARR_STREAM_FILTER_JOIN_GAP_MS", "join_gap_ms", 20)
 
 MEDIA_EXTENSIONS = {
     ".mkv", ".mp4", ".m4v", ".mov", ".avi", ".ts", ".m2ts", ".mpg", ".mpeg", ".webm",
@@ -105,10 +139,10 @@ def _merge_ranges(ranges: Iterable[tuple[float, float]]) -> list[tuple[float, fl
 
 
 def _allowlisted(media: Path) -> bool:
-    if not ALLOWLIST.is_file():
-        return False
     wanted = media.name.casefold()
     try:
+        if not ALLOWLIST.is_file():
+            return False
         lines = ALLOWLIST.read_text(encoding="utf-8").splitlines()
     except Exception:
         return False
@@ -123,12 +157,18 @@ def _allowlisted(media: Path) -> bool:
 
 def _report_for_media(media: Path) -> tuple[Path | None, list[tuple[float, float]]]:
     wanted = media.name.casefold()
-    if not wanted or not REPORT_DIR.is_dir():
+    if not wanted:
         return None, []
     try:
-        candidates = sorted(REPORT_DIR.glob("*.json"), key=lambda p: p.stat().st_mtime, reverse=True)
-    except OSError:
+        if not REPORT_DIR.is_dir():
+            return None, []
         candidates = list(REPORT_DIR.glob("*.json"))
+    except OSError:
+        return None, []
+    try:
+        candidates.sort(key=lambda p: p.stat().st_mtime, reverse=True)
+    except OSError:
+        pass
     for candidate in candidates:
         payload = _read_json(candidate)
         if payload is None:
