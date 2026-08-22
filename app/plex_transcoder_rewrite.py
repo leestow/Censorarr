@@ -1,8 +1,8 @@
 """Rewrite a Plex Transcoder argv to apply Censorarr mute ranges server-side.
 
 This is the bridge between Plex's own transcoding pipeline and Censorarr's
-media-timeline profanity ranges.  It does not poll a player or issue volume
-commands.  Instead it injects a volume filter into Plex's existing audio
+media-timeline profanity ranges. It does not poll a player or issue volume
+commands. Instead it injects a volume filter into Plex's existing audio
 filter_complex graph so the outgoing audio bytes are already clean.
 
 The first use is deliberately conservative: if a supported Plex audio graph or
@@ -32,21 +32,11 @@ def read_argv_file(path: Path) -> list[str]:
 
 
 def _filter_complex_slots(argv: list[str]) -> list[int]:
-    out: list[int] = []
-    for i in range(len(argv) - 1):
-        if argv[i] == "-filter_complex":
-            out.append(i + 1)
-    return out
+    return [i + 1 for i in range(len(argv) - 1) if argv[i] == "-filter_complex"]
 
 
 def _audio_filter_slot(argv: list[str]) -> int | None:
-    """Return the value index of Plex's audio filter_complex graph.
-
-    Plex often emits separate -filter_complex arguments for video and audio.
-    The captured Synology command has an aresample graph for audio, which is a
-    strong and safe discriminator.  We intentionally do not guess when the
-    graph shape is ambiguous.
-    """
+    """Return the value index of Plex's audio filter_complex graph."""
     candidates: list[int] = []
     for idx in _filter_complex_slots(argv):
         graph = argv[idx]
@@ -55,40 +45,37 @@ def _audio_filter_slot(argv: list[str]) -> int | None:
             candidates.append(idx)
     if len(candidates) == 1:
         return candidates[0]
-    # Prefer the single graph containing aresample when several audio-ish
-    # graphs exist; this matches stock Plex transcode output on the current PMS.
     resample = [idx for idx in candidates if "aresample" in argv[idx].lower()]
     return resample[0] if len(resample) == 1 else None
 
 
 def _inject_filter(graph: str, mute_filter: str) -> str | None:
-    if "censorarr" in graph.lower():
+    if "volume=volume=0" in graph.lower():
         return graph
     match = _OUTPUT_LABEL_RE.search(graph)
     if not match:
         return None
     label = match.group(1)
     prefix = graph[: match.start()].rstrip()
-    # The metadata filter is harmless to ffmpeg and gives captures/logs an
-    # obvious marker that this graph passed through Censorarr.
-    injected = f"{prefix},{mute_filter},ametadata=mode=add:key=censorarr:value=1{label}"
-    return injected
+    return f"{prefix},{mute_filter}{label}"
 
 
-def _timeline_ranges(argv: list[str], media_index: int, ranges: list[tuple[float, float]]) -> tuple[list[tuple[float, float]], str, float]:
+def _timeline_ranges(
+    argv: list[str],
+    media_index: int,
+    ranges: list[tuple[float, float]],
+) -> tuple[list[tuple[float, float]], str, float]:
     seek = stream_filter.input_seek_seconds(argv, media_index)
     # Plex's captured command uses -copyts -start_at_zero. FFmpeg documents
-    # that an input seek such as -ss 50 then retains a 50-second timestamp
-    # origin, so Censorarr's absolute media timestamps are directly usable.
+    # that an input seek such as -ss 50 then retains a 50-second output
+    # timestamp origin, so Censorarr's absolute media timestamps are directly
+    # usable by the audio filter.
     if "-copyts" in argv and "-start_at_zero" in argv:
-        # Ranges before the seek can never fire and only make the expression
-        # longer. Keep a small margin for keyframe/accurate-seek preroll.
         keep_from = max(0.0, seek - 2.0)
         return [(a, b) for a, b in ranges if b >= keep_from], "absolute-copyts", seek
 
-    # Fallback for non-copyts ffmpeg shapes: input -ss normally makes the
-    # filtered timeline start near zero, so convert media times to seek-relative
-    # times. This path remains conservative and clips intervals before zero.
+    # Conservative fallback for a non-copyts shape: convert media timestamps to
+    # seek-relative time because the filtered timeline normally begins near 0.
     relative: list[tuple[float, float]] = []
     for a, b in ranges:
         if b <= seek:
@@ -179,8 +166,6 @@ def main() -> int:
     args = p.parse_args()
 
     argv = read_argv_file(Path(args.args_file))
-    # /proc/<pid>/cmdline includes argv[0]. A real exec wrapper receives only
-    # argv[1:], so strip a leading Plex Transcoder executable for analysis.
     if argv and Path(argv[0]).name == "Plex Transcoder":
         executable = argv.pop(0)
     else:
