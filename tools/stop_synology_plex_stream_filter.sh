@@ -12,7 +12,11 @@ else
   ROOT="$SCRIPT_DIR"
 fi
 WORK="${CENSORARR_WORK_DIR:-$ROOT/work}"
+CLIENT_STATE="$WORK/plex-stream-client-ip"
 CLIENT_IP="${CENSORARR_PLEX_CLIENT_IP:-${1:-}}"
+if [ -z "$CLIENT_IP" ] && [ -f "$CLIENT_STATE" ]; then
+  CLIENT_IP="$(cat "$CLIENT_STATE" 2>/dev/null || true)"
+fi
 POLICY_PORT="${CENSORARR_POLICY_PORT:-32402}"
 GATEWAY_PORT="${CENSORARR_GATEWAY_PORT:-32403}"
 PLEX_PORT="${CENSORARR_PLEX_PORT:-32400}"
@@ -49,5 +53,6 @@ if [ -n "$CLIENT_IP" ]; then
     iptables -t nat -D PREROUTING -s "$CLIENT_IP" -p tcp --dport "$PLEX_PORT" -j REDIRECT --to-ports "$POLICY_PORT"
   done
 fi
+rm -f "$CLIENT_STATE"
 
 echo "Censorarr Plex stream filter stopped.${CLIENT_IP:+ Redirect removed for $CLIENT_IP.}"
