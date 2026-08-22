@@ -6,11 +6,11 @@ copy, disables audio Direct Stream so audio reaches the Censorarr transcoder
 shim, and preserves timestamps for mute-range alignment.
 
 For Plex Android TV text subtitles, the client may request subtitles=burn even
-though it can render timed text. Burning an SRT forces video encoding. For that
-specific text-subtitle case Censorarr changes the request to subtitles=auto and
-adds an HLS WebVTT subtitle transcode target. Plex can then convert text
-subtitles for the HLS player without burning them into the copied video.
-Advanced/image subtitle behavior is otherwise left untouched.
+though Plex can provide the selected subtitle as a separate segmented stream.
+Burning an SRT forces video encoding. For that specific text-subtitle case
+Censorarr changes the request to subtitles=segmented, matching Plex's native
+sub-header/sub-chunk output while leaving advanced/image subtitle behavior
+untouched.
 """
 from __future__ import annotations
 
@@ -28,10 +28,6 @@ proxy.FILTER_VALUES.update(
 )
 
 _original_rewrite_target = proxy._rewrite_target
-_HLS_WEBVTT_TARGET = (
-    "add-transcode-target(type=subtitleProfile&context=streaming&protocol=hls&"
-    "container=webvtt&subtitleCodec=webvtt&replace=true)"
-)
 
 
 def _rewrite_target(target: str) -> tuple[str, dict[str, str]]:
@@ -45,35 +41,17 @@ def _rewrite_target(target: str) -> tuple[str, dict[str, str]]:
         and values.get("subtitles", "").casefold() == "burn"
     ):
         out: list[tuple[str, str]] = []
-        saw_profile = False
-        profile_changed = False
-
         for key, value in rows:
-            lower = key.casefold()
-            if lower == "subtitles":
-                out.append((key, "auto"))
-                continue
-            if lower == "x-plex-client-profile-extra":
-                saw_profile = True
-                profile = value
-                if "protocol=hls&container=webvtt&subtitlecodec=webvtt" not in profile.casefold():
-                    profile = (profile + "+" if profile else "") + _HLS_WEBVTT_TARGET
-                    profile_changed = True
-                out.append((key, profile))
-                continue
-            out.append((key, value))
-
-        if not saw_profile:
-            out.append(("X-Plex-Client-Profile-Extra", _HLS_WEBVTT_TARGET))
-            profile_changed = True
+            if key.casefold() == "subtitles":
+                out.append((key, "segmented"))
+            else:
+                out.append((key, value))
 
         rewritten = urlunsplit(
             (parts.scheme, parts.netloc, parts.path, urlencode(out, doseq=True), parts.fragment)
         )
         changed = dict(changed)
-        changed["subtitles"] = "auto"
-        if profile_changed:
-            changed["X-Plex-Client-Profile-Extra"] = "append-hls-webvtt"
+        changed["subtitles"] = "segmented"
 
     return rewritten, changed
 
