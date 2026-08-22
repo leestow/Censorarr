@@ -23,6 +23,7 @@ POLICY="$CODE_DIR/plex_stream_filter_policy_proxy.py"
 GATEWAY="$CODE_DIR/plex_stream_filter_gateway.py"
 POLICY_PID="$WORK/plex-stream-policy.pid"
 GATEWAY_PID="$WORK/plex-stream-gateway.pid"
+CLIENT_STATE="$WORK/plex-stream-client-ip"
 POLICY_LOG="$WORK/plex-stream-policy.log"
 GATEWAY_LOG="$WORK/plex-stream-gateway.log"
 POLICY_CONSOLE="$WORK/plex-stream-policy-console.log"
@@ -49,6 +50,17 @@ fi
 
 mkdir -p "$WORK"
 
+remove_redirects() {
+  ip="$1"
+  [ -n "$ip" ] || return 0
+  while iptables -t nat -C PREROUTING -s "$ip" -p tcp --dport "$PLEX_PORT" -j REDIRECT --to-ports "$POLICY_PORT" 2>/dev/null; do
+    iptables -t nat -D PREROUTING -s "$ip" -p tcp --dport "$PLEX_PORT" -j REDIRECT --to-ports "$POLICY_PORT"
+  done
+  while iptables -t nat -C PREROUTING -s "$ip" -p tcp --dport "$PLEX_PORT" -j REDIRECT --to-ports "$GATEWAY_PORT" 2>/dev/null; do
+    iptables -t nat -D PREROUTING -s "$ip" -p tcp --dport "$PLEX_PORT" -j REDIRECT --to-ports "$GATEWAY_PORT"
+  done
+}
+
 kill_pidfile() {
   file="$1"
   if [ -f "$file" ]; then
@@ -61,6 +73,8 @@ kill_pidfile() {
   fi
 }
 
+OLD_CLIENT="$(cat "$CLIENT_STATE" 2>/dev/null || true)"
+remove_redirects "$OLD_CLIENT"
 kill_pidfile "$GATEWAY_PID"
 kill_pidfile "$POLICY_PID"
 # Clean up development checkpoints so only the stable runtime owns the ports.
@@ -105,14 +119,11 @@ if ! kill -0 "$gateway_pid" 2>/dev/null; then
 fi
 
 if [ -n "$CLIENT_IP" ]; then
-  while iptables -t nat -C PREROUTING -s "$CLIENT_IP" -p tcp --dport "$PLEX_PORT" -j REDIRECT --to-ports "$POLICY_PORT" 2>/dev/null; do
-    iptables -t nat -D PREROUTING -s "$CLIENT_IP" -p tcp --dport "$PLEX_PORT" -j REDIRECT --to-ports "$POLICY_PORT"
-  done
-  while iptables -t nat -C PREROUTING -s "$CLIENT_IP" -p tcp --dport "$PLEX_PORT" -j REDIRECT --to-ports "$GATEWAY_PORT" 2>/dev/null; do
-    iptables -t nat -D PREROUTING -s "$CLIENT_IP" -p tcp --dport "$PLEX_PORT" -j REDIRECT --to-ports "$GATEWAY_PORT"
-  done
+  remove_redirects "$CLIENT_IP"
   iptables -t nat -I PREROUTING 1 -s "$CLIENT_IP" -p tcp --dport "$PLEX_PORT" -j REDIRECT --to-ports "$GATEWAY_PORT"
+  printf '%s\n' "$CLIENT_IP" > "$CLIENT_STATE"
 else
+  rm -f "$CLIENT_STATE"
   echo "WARNING: no client IP supplied; gateway is running but no iptables redirect was added."
   echo "Set CENSORARR_PLEX_CLIENT_IP or pass the client IP as argument 1."
 fi
