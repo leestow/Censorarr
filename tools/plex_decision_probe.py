@@ -2,22 +2,22 @@
 """Read a real Plex universal decision request from PMS logs and compare policies.
 
 Development probe only. It does not proxy traffic or modify Plex configuration.
-It locates the newest universal-transcode decision request in the Plex Media Server
-log, replays it locally against PMS, then replays a Censorarr-filtered variant:
+It locates the newest universal-transcode decision request in Plex Media Server.log,
+replays it locally against PMS with the original client's X-Plex headers, then
+replays a Censorarr-filtered variant:
 
     directPlay=0
     directStream=1
     directStreamAudio=0
     copyts=1
 
-The probe never prints Plex tokens. If the PMS log redacts the client token, it can
-use PlexOnlineToken from Preferences.xml for the local decision requests.
+The probe never prints Plex tokens. If the PMS log redacts the client token, it uses
+PlexOnlineToken from Preferences.xml for the local decision requests.
 """
 from __future__ import annotations
 
 import argparse
 import json
-import os
 import re
 import sys
 import urllib.error
@@ -45,6 +45,7 @@ PREF_CANDIDATES = (
 )
 DECISION_RE = re.compile(r"(/video/:/transcode/universal/decision\?[^\s\"']+)")
 TOKEN_RE = re.compile(r"([?&]X-Plex-Token=)[^&]+", re.IGNORECASE)
+HEADER_PAIR_RE = re.compile(r"\s/\s([^/=]+?)\s*=>\s*(.*?)(?=\s/\s[^/=]+?\s*=>|$)")
 
 
 def _first_file(candidates: tuple[str, ...], explicit: str | None = None) -> Path | None:
@@ -55,7 +56,6 @@ def _first_file(candidates: tuple[str, ...], explicit: str | None = None) -> Pat
         p = Path(raw)
         if p.is_file():
             return p
-    # Synology package/share layouts vary. Keep the fallback bounded to likely roots.
     roots = [Path("/volume1/PlexMediaServer"), Path("/var/packages/PlexMediaServer"), Path("/volume1/@appdata/PlexMediaServer")]
     wanted = Path(candidates[0]).name
     for root in roots:
@@ -79,11 +79,29 @@ def _tail_text(path: Path, max_bytes: int = 8 * 1024 * 1024) -> str:
     return raw.decode("utf-8", "replace")
 
 
-def newest_decision_path(log_path: Path) -> str:
-    matches = DECISION_RE.findall(_tail_text(log_path))
-    if not matches:
-        raise RuntimeError("No Plex universal decision request was found in the recent server log")
-    return matches[-1].replace("&amp;", "&")
+def newest_decision_request(log_path: Path) -> tuple[str, dict[str, str], str]:
+    lines = _tail_text(log_path).splitlines()
+    for line in reversed(lines):
+        match = DECISION_RE.search(line)
+        if not match:
+            continue
+        path = match.group(1).replace("&amp;", "&")
+        headers: dict[str, str] = {}
+        for hmatch in HEADER_PAIR_RE.finditer(line):
+            key = hmatch.group(1).strip()
+            value = hmatch.group(2).strip()
+            if not key or not value:
+                continue
+            # Let urllib generate transport headers for the local replay. Preserve the
+            # Plex capability headers that actually influence the decision engine.
+            if key.casefold() in {"host", "connection", "accept-encoding", "content-length"}:
+                continue
+            if key.casefold() == "x-plex-token":
+                continue
+            if key.casefold().startswith("x-plex-") or key.casefold() in {"accept", "accept-language", "user-agent"}:
+                headers[key] = value
+        return path, headers, line
+    raise RuntimeError("No Plex universal decision request was found in the recent server log")
 
 
 def plex_online_token(pref_path: Path | None) -> str:
@@ -140,8 +158,23 @@ def redact_url(url: str) -> str:
     return TOKEN_RE.sub(r"\1<redacted>", url)
 
 
-def fetch(url: str, timeout: float = 20.0) -> tuple[int, bytes, str]:
-    req = urllib.request.Request(url, headers={"Accept": "application/xml", "User-Agent": "Censorarr-Decision-Probe/1"})
+def redacted_headers(headers: dict[str, str]) -> dict[str, str]:
+    out: dict[str, str] = {}
+    for key, value in headers.items():
+        if key.casefold() == "x-plex-token":
+            out[key] = "<redacted>"
+        elif key.casefold() == "x-plex-client-profile-extra" and len(value) > 240:
+            out[key] = value[:240] + f"... ({len(value)} chars)"
+        else:
+            out[key] = value
+    return out
+
+
+def fetch(url: str, headers: dict[str, str] | None = None, timeout: float = 20.0) -> tuple[int, bytes, str]:
+    request_headers = dict(headers or {})
+    request_headers.setdefault("Accept", "application/xml")
+    request_headers.setdefault("User-Agent", "Censorarr-Decision-Probe/2")
+    req = urllib.request.Request(url, headers=request_headers)
     try:
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             return int(resp.status), resp.read(), str(resp.headers.get("Content-Type") or "")
@@ -153,7 +186,7 @@ def summarize_xml(raw: bytes) -> dict:
     try:
         root = ET.fromstring(raw)
     except Exception as exc:
-        text = raw.decode("utf-8", "replace")[:500]
+        text = raw.decode("utf-8", "replace")[:1000]
         return {"parse_error": str(exc), "body_preview": text}
 
     root_keys = (
@@ -172,6 +205,40 @@ def summarize_xml(raw: bytes) -> dict:
     return out
 
 
+def current_sessions(server_token: str) -> list[dict]:
+    if not server_token:
+        return []
+    url = "http://127.0.0.1:32400/status/sessions?" + urlencode({"X-Plex-Token": server_token})
+    status, raw, _content_type = fetch(url, {"Accept": "application/xml"})
+    if status != 200:
+        return []
+    try:
+        root = ET.fromstring(raw)
+    except Exception:
+        return []
+    out: list[dict] = []
+    for video in root.findall(".//Video"):
+        row = {
+            "title": video.attrib.get("title"),
+            "type": video.attrib.get("type"),
+            "viewOffset": video.attrib.get("viewOffset"),
+            "session": None,
+            "player": {},
+            "transcode": None,
+        }
+        session = video.find("Session")
+        if session is not None:
+            row["session"] = session.attrib.get("id")
+        player = video.find("Player")
+        if player is not None:
+            row["player"] = {k: player.attrib.get(k) for k in ("title", "platform", "product", "machineIdentifier", "local") if player.attrib.get(k) is not None}
+        transcode = video.find("TranscodeSession")
+        if transcode is not None:
+            row["transcode"] = {k: transcode.attrib.get(k) for k in ("protocol", "container", "videoDecision", "audioDecision", "subtitleDecision", "transcodeHwRequested", "transcodeHwFullPipeline") if transcode.attrib.get(k) is not None}
+        out.append(row)
+    return out
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Compare a real Plex playback decision with Censorarr forced-audio policy")
     parser.add_argument("--log", help="Explicit Plex Media Server.log path")
@@ -187,7 +254,11 @@ def main() -> int:
     pref_path = _first_file(PREF_CANDIDATES, args.preferences)
     token = plex_online_token(pref_path)
 
-    captured = args.url or newest_decision_path(log_path)
+    captured_headers: dict[str, str] = {}
+    if args.url:
+        captured = args.url
+    else:
+        captured, captured_headers, _line = newest_decision_request(log_path)
     original = localize_request(captured, token)
     forced = filtered_url(original)
 
@@ -195,17 +266,25 @@ def main() -> int:
     print(f"Preferences: {pref_path or '(not found)'}")
     print("Captured:", redact_url(original))
     print("Filtered:", redact_url(forced))
+    print("Captured client headers:")
+    print(json.dumps(redacted_headers(captured_headers), indent=2))
+    sessions = current_sessions(token)
+    print("Current sessions:")
+    print(json.dumps(sessions, indent=2))
 
     save = Path(args.save_dir)
     save.mkdir(parents=True, exist_ok=True)
     results = {}
     for name, url in (("original", original), ("filtered", forced)):
-        status, body, content_type = fetch(url)
+        status, body, content_type = fetch(url, captured_headers)
         (save / f"censorarr-plex-decision-{name}.xml").write_bytes(body)
+        decision = summarize_xml(body)
+        if status != 200:
+            decision["body_preview"] = body.decode("utf-8", "replace")[:1000]
         results[name] = {
             "http_status": status,
             "content_type": content_type,
-            "decision": summarize_xml(body),
+            "decision": decision,
         }
 
     print(json.dumps(results, indent=2))
