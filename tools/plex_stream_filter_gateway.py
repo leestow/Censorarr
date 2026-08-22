@@ -319,7 +319,7 @@ def _inject_subtitle_master(payload: bytes, client_id: str) -> tuple[bytes, bool
     uri = f"/censorarr/subtitles/{quote(client_id, safe='')}/index.m3u8"
     media = (
         '#EXT-X-MEDIA:TYPE=SUBTITLES,GROUP-ID="%s",NAME="English",'
-        'LANGUAGE="en",AUTOSELECT=YES,DEFAULT=YES,FORCED=NO,URI="%s"'
+        'LANGUAGE="en",AUTOSELECT=YES,DEFAULT=NO,FORCED=YES,URI="%s"'
         % (group, uri)
     )
 
@@ -503,7 +503,7 @@ class GatewayHandler(validated.V5Handler):
                 payload, changed = _inject_subtitle_master(payload, client_id)
             if changed:
                 state.log(
-                    "SUBTITLE_MASTER_INJECT client=%s session=%s mode=webvtt-segmented-aligned"
+                    "SUBTITLE_MASTER_INJECT client=%s session=%s mode=webvtt-segmented-aligned-forced"
                     % (self.client_address[0], client_id)
                 )
             else:
@@ -595,7 +595,7 @@ def main() -> int:
     server.state = state  # type: ignore[attr-defined]
     state.log(
         "START_GATEWAY listen=%s:%s policy=%s:%s plex=%s:%s tls=plex:%s allowlist=%s "
-        "directplay=reject-415 native_hls=yes video=copy audio=transcode text_subtitles=webvtt-aligned"
+        "directplay=reject-415 native_hls=yes video=copy audio=transcode text_subtitles=webvtt-aligned-forced"
         % (
             args.listen_host,
             args.listen_port,
