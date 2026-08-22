@@ -6,11 +6,11 @@ copy, disables audio Direct Stream so audio reaches the Censorarr transcoder
 shim, and preserves timestamps for mute-range alignment.
 
 For Plex Android TV text subtitles, the client may request subtitles=burn even
-though the HLS/Matroska target can carry compatible text subtitles. Burning an
-SRT forces video encoding. For that specific text-subtitle case Censorarr
-changes the request to subtitles=embedded so Plex can mux the selected text
-subtitle into the HLS Matroska segments while leaving advanced/image subtitle
-behavior untouched.
+though the selected SRT can be delivered separately. Burning an SRT forces video
+encoding. For that specific text-subtitle case Censorarr changes the request to
+subtitles=sidecar. The stream-filter gateway then advertises a WebVTT rendition
+built from Plex's temp-0.srt while leaving advanced/image subtitle behavior
+untouched.
 """
 from __future__ import annotations
 
@@ -43,7 +43,7 @@ def _rewrite_target(target: str) -> tuple[str, dict[str, str]]:
         out: list[tuple[str, str]] = []
         for key, value in rows:
             if key.casefold() == "subtitles":
-                out.append((key, "embedded"))
+                out.append((key, "sidecar"))
             else:
                 out.append((key, value))
 
@@ -51,7 +51,7 @@ def _rewrite_target(target: str) -> tuple[str, dict[str, str]]:
             (parts.scheme, parts.netloc, parts.path, urlencode(out, doseq=True), parts.fragment)
         )
         changed = dict(changed)
-        changed["subtitles"] = "embedded"
+        changed["subtitles"] = "sidecar"
 
     return rewritten, changed
 
