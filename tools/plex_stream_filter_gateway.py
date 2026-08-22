@@ -14,19 +14,375 @@ The companion policy proxy forces filtered universal playback to:
   copyts=1
 
 That keeps compatible video on COPY while routing audio through the Censorarr
-Plex Transcoder shim for profanity muting. The v1-v5 modules remain in the
-repository as development checkpoints; this file is the stable runtime entry
-point.
+Plex Transcoder shim for profanity muting.
+
+For selected text subtitles, Plex Android TV may request burn-in even though
+Plex creates temp-0.srt. The policy proxy prevents the burn. This gateway then
+adds a WebVTT subtitle rendition to the HLS master playlist and serves WebVTT
+converted on demand from Plex's active temp-0.srt. Image/advanced subtitles are
+left alone.
 """
 from __future__ import annotations
 
 import argparse
+import http.client
+import math
+import re
+import socket
 import sys
+from pathlib import Path
+from urllib.parse import parse_qsl, quote, unquote, urlsplit
 
+import plex_policy_proxy as policy
 import plex_filtered_handoff as base
 import plex_filtered_handoff_v2 as v2
 import plex_filtered_handoff_v3 as v3
 import plex_filtered_handoff_v5 as validated
+
+
+_SUBTITLE_PATH_RE = re.compile(
+    r"^/censorarr/subtitles/([^/]+)/(index\.m3u8|subtitle\.vtt)$", re.I
+)
+_SRT_TIME_RE = re.compile(
+    r"(?m)^(\d{1,3}:\d{2}:\d{2}),(\d{3})\s+-->\s+"
+    r"(\d{1,3}:\d{2}:\d{2}),(\d{3})(.*)$"
+)
+_SRT_END_RE = re.compile(
+    r"-->\s*(\d{1,3}):(\d{2}):(\d{2})[,.](\d{3})"
+)
+
+
+def _query_values(target: str) -> dict[str, str]:
+    return {
+        str(key).casefold(): str(value)
+        for key, value in parse_qsl(urlsplit(target).query, keep_blank_values=True)
+    }
+
+
+def _is_text_subtitle_master(target: str) -> bool:
+    parts = urlsplit(target)
+    if parts.path.casefold() != (policy.UNIVERSAL_PREFIX + "start.m3u8").casefold():
+        return False
+    values = _query_values(target)
+    return (
+        values.get("advancedsubtitles", "").casefold() == "text"
+        and values.get("subtitles", "").casefold() == "burn"
+        and bool(values.get("session", "").strip())
+    )
+
+
+def _send_response(
+    client: socket.socket,
+    status: int,
+    reason: str,
+    headers: list[tuple[str, str]],
+    payload: bytes,
+) -> None:
+    rows = [f"HTTP/1.1 {status} {reason}".encode("iso-8859-1", "replace")]
+    blocked = {
+        "content-length",
+        "transfer-encoding",
+        "connection",
+        "content-encoding",
+    }
+    saw_type = False
+    for key, value in headers:
+        lower = str(key).casefold()
+        if lower in blocked:
+            continue
+        if lower == "content-type":
+            saw_type = True
+        rows.append(f"{key}: {value}".encode("iso-8859-1", "replace"))
+    if not saw_type:
+        rows.append(b"Content-Type: application/octet-stream")
+    rows.append(f"Content-Length: {len(payload)}".encode("ascii"))
+    rows.append(b"Connection: close")
+    client.sendall(b"\r\n".join(rows) + b"\r\n\r\n" + payload)
+
+
+def _send_simple(
+    client: socket.socket,
+    status: int,
+    reason: str,
+    content_type: str,
+    payload: bytes,
+) -> None:
+    _send_response(
+        client,
+        status,
+        reason,
+        [
+            ("Content-Type", content_type),
+            ("Cache-Control", "no-store"),
+        ],
+        payload,
+    )
+
+
+def _active_srt(state: v3.V3State, client_id: str) -> Path | None:
+    root = getattr(state, "subtitle_sessions_root", None)
+    if not isinstance(root, Path) or not root.is_dir():
+        return None
+    prefix = f"plex-transcode-{client_id}-"
+    found: list[tuple[float, Path]] = []
+    try:
+        children = list(root.iterdir())
+    except OSError:
+        return None
+    for child in children:
+        if not child.is_dir() or not child.name.startswith(prefix):
+            continue
+        srt = child / "temp-0.srt"
+        try:
+            if srt.is_file() and srt.stat().st_size > 0:
+                found.append((srt.stat().st_mtime, srt))
+        except OSError:
+            continue
+    if not found:
+        return None
+    found.sort(key=lambda row: row[0], reverse=True)
+    return found[0][1]
+
+
+def _srt_to_webvtt(raw: str) -> tuple[str, float]:
+    text = str(raw or "").lstrip("\ufeff").replace("\r\n", "\n").replace("\r", "\n")
+    text = _SRT_TIME_RE.sub(
+        lambda m: f"{m.group(1)}.{m.group(2)} --> {m.group(3)}.{m.group(4)}{m.group(5)}",
+        text,
+    )
+    max_end = 1.0
+    for match in _SRT_END_RE.finditer(raw):
+        try:
+            hours = int(match.group(1))
+            minutes = int(match.group(2))
+            seconds = int(match.group(3))
+            millis = int(match.group(4))
+        except ValueError:
+            continue
+        max_end = max(
+            max_end,
+            hours * 3600.0 + minutes * 60.0 + seconds + millis / 1000.0,
+        )
+    return "WEBVTT\n\n" + text.lstrip(), max_end + 60.0
+
+
+def _subtitle_playlist(duration: float) -> bytes:
+    length = max(1.0, float(duration))
+    target = max(1, int(math.ceil(length)))
+    text = (
+        "#EXTM3U\n"
+        "#EXT-X-VERSION:3\n"
+        "#EXT-X-PLAYLIST-TYPE:VOD\n"
+        f"#EXT-X-TARGETDURATION:{target}\n"
+        "#EXT-X-MEDIA-SEQUENCE:0\n"
+        f"#EXTINF:{length:.3f},\n"
+        "subtitle.vtt\n"
+        "#EXT-X-ENDLIST\n"
+    )
+    return text.encode("utf-8")
+
+
+def _inject_subtitle_master(payload: bytes, client_id: str) -> tuple[bytes, bool]:
+    try:
+        text = payload.decode("utf-8")
+    except UnicodeDecodeError:
+        return payload, False
+    if not text.startswith("#EXTM3U"):
+        return payload, False
+    if "#EXT-X-MEDIA:TYPE=SUBTITLES" in text:
+        return payload, False
+
+    group = "censorarr-text"
+    uri = f"/censorarr/subtitles/{quote(client_id, safe='')}/index.m3u8"
+    media = (
+        '#EXT-X-MEDIA:TYPE=SUBTITLES,GROUP-ID="%s",NAME="English",'
+        'LANGUAGE="en",AUTOSELECT=YES,DEFAULT=YES,FORCED=NO,URI="%s"'
+        % (group, uri)
+    )
+
+    rows = text.splitlines()
+    out: list[str] = []
+    inserted_media = False
+    changed_variant = False
+    for row in rows:
+        out.append(row)
+        if not inserted_media and row.strip() == "#EXTM3U":
+            out.append(media)
+            inserted_media = True
+            continue
+        if row.startswith("#EXT-X-STREAM-INF:") and "SUBTITLES=" not in row:
+            out[-1] = row + f',SUBTITLES="{group}"'
+            changed_variant = True
+
+    if not inserted_media or not changed_variant:
+        return payload, False
+    return ("\n".join(out) + "\n").encode("utf-8"), True
+
+
+class GatewayHandler(validated.V5Handler):
+    def _serve_subtitle_path(
+        self,
+        state: v3.V3State,
+        client: socket.socket,
+        path: str,
+    ) -> bool:
+        match = _SUBTITLE_PATH_RE.match(path)
+        if not match:
+            return False
+
+        client_id = unquote(match.group(1)).strip()
+        leaf = match.group(2).casefold()
+        srt = _active_srt(state, client_id)
+        if srt is None:
+            state.log(
+                "SUBTITLE_MISS client=%s session=%s path=%s status=404"
+                % (self.client_address[0], client_id or "-", leaf)
+            )
+            _send_simple(client, 404, "Not Found", "text/plain; charset=utf-8", b"")
+            return True
+
+        try:
+            raw = srt.read_text(encoding="utf-8", errors="replace")
+            webvtt, duration = _srt_to_webvtt(raw)
+        except OSError as exc:
+            state.log(
+                "SUBTITLE_READ_FAIL client=%s session=%s error=%s"
+                % (self.client_address[0], client_id or "-", exc)
+            )
+            _send_simple(
+                client,
+                500,
+                "Internal Server Error",
+                "text/plain; charset=utf-8",
+                b"",
+            )
+            return True
+
+        if leaf == "index.m3u8":
+            payload = _subtitle_playlist(duration)
+            state.log(
+                "SUBTITLE_PLAYLIST client=%s session=%s source=%s bytes=%s"
+                % (self.client_address[0], client_id, srt.name, len(payload))
+            )
+            _send_simple(
+                client,
+                200,
+                "OK",
+                "application/vnd.apple.mpegurl",
+                payload,
+            )
+            return True
+
+        payload = webvtt.encode("utf-8")
+        state.log(
+            "SUBTITLE_VTT client=%s session=%s source=%s bytes=%s"
+            % (self.client_address[0], client_id, srt.name, len(payload))
+        )
+        _send_simple(
+            client,
+            200,
+            "OK",
+            "text/vtt; charset=utf-8",
+            payload,
+        )
+        return True
+
+    def _forward_text_subtitle_master(
+        self,
+        state: v3.V3State,
+        client: socket.socket,
+        method: str,
+        target: str,
+        lines: list[bytes],
+        body: bytes,
+    ) -> None:
+        headers = policy._headers_dict(lines[1:])
+        out: dict[str, str] = {}
+        for key, value in headers.items():
+            lower = key.casefold()
+            if lower in {
+                "host",
+                "connection",
+                "proxy-connection",
+                "accept-encoding",
+                "content-length",
+            }:
+                continue
+            out[key] = value
+        out["Host"] = f"{state.policy_host}:{state.policy_port}"
+        out["Accept-Encoding"] = "identity"
+        out["Connection"] = "close"
+
+        conn = http.client.HTTPConnection(
+            state.policy_host,
+            state.policy_port,
+            timeout=60.0,
+        )
+        try:
+            conn.request(method, target, body=body or None, headers=out)
+            resp = conn.getresponse()
+            payload = resp.read()
+            response_headers = [(str(k), str(v)) for k, v in resp.getheaders()]
+            reason = str(resp.reason or "OK")
+            status = int(resp.status)
+
+            values = _query_values(target)
+            client_id = values.get("session", "").strip()
+            changed = False
+            if status == 200 and client_id:
+                payload, changed = _inject_subtitle_master(payload, client_id)
+            if changed:
+                state.log(
+                    "SUBTITLE_MASTER_INJECT client=%s session=%s mode=webvtt"
+                    % (self.client_address[0], client_id)
+                )
+            else:
+                state.log(
+                    "SUBTITLE_MASTER_PASS client=%s session=%s status=%s"
+                    % (self.client_address[0], client_id or "-", status)
+                )
+            _send_response(client, status, reason, response_headers, payload)
+        finally:
+            conn.close()
+
+    def _forward_normal(
+        self,
+        state: v3.V3State,
+        client: socket.socket,
+        method: str,
+        target: str,
+        version: str,
+        lines: list[bytes],
+        body: bytes,
+        upgrade: bool,
+    ) -> None:
+        path = urlsplit(target).path
+        if method.upper() == "GET" and self._serve_subtitle_path(state, client, path):
+            return
+        if (
+            method.upper() == "GET"
+            and not upgrade
+            and _is_text_subtitle_master(target)
+        ):
+            self._forward_text_subtitle_master(
+                state,
+                client,
+                method,
+                target,
+                lines,
+                body,
+            )
+            return
+        super()._forward_normal(
+            state,
+            client,
+            method,
+            target,
+            version,
+            lines,
+            body,
+            upgrade,
+        )
 
 
 def main() -> int:
@@ -48,12 +404,14 @@ def main() -> int:
 
     try:
         state = v3.V3State(args)
+        appdata = policy._find_plex_appdata(args.plex_appdata)
+        state.subtitle_sessions_root = appdata / "Cache" / "Transcode" / "Sessions"
     except Exception as exc:
         print(f"ERROR: gateway preflight failed: {exc}", file=sys.stderr)
         return 2
 
     try:
-        server = base.ThreadingHandoffProxy((args.listen_host, args.listen_port), validated.V5Handler)
+        server = base.ThreadingHandoffProxy((args.listen_host, args.listen_port), GatewayHandler)
     except OSError as exc:
         print(f"ERROR: could not listen on {args.listen_host}:{args.listen_port}: {exc}", file=sys.stderr)
         return 3
@@ -61,7 +419,7 @@ def main() -> int:
     server.state = state  # type: ignore[attr-defined]
     state.log(
         "START_GATEWAY listen=%s:%s policy=%s:%s plex=%s:%s tls=plex:%s allowlist=%s "
-        "directplay=reject-415 native_hls=yes video=copy audio=transcode"
+        "directplay=reject-415 native_hls=yes video=copy audio=transcode text_subtitles=webvtt"
         % (
             args.listen_host,
             args.listen_port,
