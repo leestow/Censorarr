@@ -1,33 +1,39 @@
 #!/usr/bin/env python3
-"""Development TCP/HTTP reverse proxy for proving Censorarr Plex playback policy.
+"""Development Plex request-policy proxy for proving Censorarr filtered playback.
 
-The proxy listens on a separate local port and forwards requests to Plex Media
-Server. For selected universal transcode decision/start requests it rewrites:
+The proxy listens on a separate port and forwards requests to Plex Media Server.
+For selected universal transcode decision/start requests it rewrites:
 
   directPlay=0
   directStream=1
   directStreamAudio=0
   copyts=1
 
-This forces playback through Plex's transcoder path while still allowing Plex to
-copy/remux video when possible. The existing Censorarr Plex Transcoder shim then
-injects profanity mute ranges into the audio graph.
+For the Shield proof, --plex-tls-auto loads the server's own plex.direct P12
+certificate so HTTPS clients can be transparently redirected to this proxy. The
+proxy accepts both TLS and plain HTTP on the same listen port.
 
-For the first proof use --force-all and redirect only one test client's traffic to
-this port. The proxy never prints raw Plex tokens. WebSocket upgrade requests are
-passed through untouched as a raw tunnel.
+The existing Censorarr Plex Transcoder shim then injects profanity mute ranges into
+Plex's audio filter graph. Raw Plex tokens and certificate passwords are never
+logged.
 """
 from __future__ import annotations
 
 import argparse
 import hashlib
 import json
+import os
 import select
+import shutil
 import socket
 import socketserver
+import ssl
+import subprocess
 import sys
+import tempfile
 import threading
 import time
+import xml.etree.ElementTree as ET
 from pathlib import Path
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
@@ -39,6 +45,12 @@ FILTER_VALUES = {
     "copyts": "1",
 }
 MAX_HEADER = 1024 * 1024
+PLEX_APPDATA_CANDIDATES = (
+    "/volume1/PlexMediaServer/AppData/Plex Media Server",
+    "/var/packages/PlexMediaServer/shares/PlexMediaServer/AppData/Plex Media Server",
+    "/volume1/@appdata/PlexMediaServer/Plex Media Server",
+)
+P12_NAMES = ("cert-v2.p12", "certificate.p12")
 
 
 def _token_sha256(token: str) -> str:
@@ -56,6 +68,97 @@ def _policy_hashes(path: str | None) -> set[str]:
         return set()
     rows = payload.get("filtered_token_sha256") if isinstance(payload, dict) else []
     return {str(x).strip().casefold() for x in (rows or []) if str(x).strip()}
+
+
+def _find_plex_appdata(explicit: str | None) -> Path:
+    if explicit:
+        p = Path(explicit)
+        if (p / "Preferences.xml").is_file():
+            return p
+        raise RuntimeError(f"Plex appdata does not contain Preferences.xml: {p}")
+    for raw in PLEX_APPDATA_CANDIDATES:
+        p = Path(raw)
+        if (p / "Preferences.xml").is_file():
+            return p
+    raise RuntimeError("could not locate Plex appdata; pass --plex-appdata")
+
+
+def _find_p12(appdata: Path) -> Path:
+    cache = appdata / "Cache"
+    for name in P12_NAMES:
+        p = cache / name
+        if p.is_file():
+            return p
+    try:
+        for p in cache.iterdir():
+            if p.is_file() and p.suffix.casefold() == ".p12":
+                return p
+    except OSError:
+        pass
+    raise RuntimeError(f"could not find Plex P12 certificate under {cache}")
+
+
+def _plex_p12_password(appdata: Path) -> str:
+    prefs = appdata / "Preferences.xml"
+    try:
+        root = ET.parse(str(prefs)).getroot()
+    except Exception as exc:
+        raise RuntimeError(f"could not read Plex Preferences.xml: {exc}") from exc
+    processed = str(root.attrib.get("ProcessedMachineIdentifier") or "").strip()
+    if not processed:
+        raise RuntimeError("ProcessedMachineIdentifier missing from Plex Preferences.xml")
+    return hashlib.sha512(("plex" + processed).encode("utf-8")).hexdigest()
+
+
+def _extract_p12_to_pem(p12: Path, password: str) -> Path:
+    openssl = shutil.which("openssl")
+    if not openssl:
+        raise RuntimeError("openssl was not found on the Synology host")
+    fd, raw_path = tempfile.mkstemp(prefix="censorarr-plex-proxy-", suffix=".pem")
+    os.close(fd)
+    pem = Path(raw_path)
+    try:
+        os.chmod(str(pem), 0o600)
+    except OSError:
+        pass
+
+    attempts = [
+        [openssl, "pkcs12", "-in", str(p12), "-nodes", "-passin", f"pass:{password}", "-out", str(pem)],
+        [openssl, "pkcs12", "-legacy", "-in", str(p12), "-nodes", "-passin", f"pass:{password}", "-out", str(pem)],
+    ]
+    errors: list[str] = []
+    for cmd in attempts:
+        try:
+            proc = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=20)
+        except Exception as exc:
+            errors.append(str(exc))
+            continue
+        if proc.returncode == 0 and pem.is_file() and pem.stat().st_size > 0:
+            return pem
+        text = proc.stderr.decode("utf-8", "replace").strip()
+        if text:
+            errors.append(text[-600:])
+    try:
+        pem.unlink()
+    except OSError:
+        pass
+    detail = " | ".join(errors[-2:]) if errors else "unknown openssl error"
+    raise RuntimeError(f"could not extract Plex P12 certificate: {detail}")
+
+
+def _build_plex_tls_context(appdata: Path) -> tuple[ssl.SSLContext, Path]:
+    p12 = _find_p12(appdata)
+    password = _plex_p12_password(appdata)
+    pem = _extract_p12_to_pem(p12, password)
+    try:
+        context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        context.load_cert_chain(str(pem))
+    finally:
+        try:
+            pem.unlink()
+        except OSError:
+            pass
+    return context, p12
 
 
 def _is_playback_path(path: str) -> bool:
@@ -79,15 +182,20 @@ def _headers_dict(lines: list[bytes]) -> dict[str, str]:
     return out
 
 
+def _header_value(headers: dict[str, str], name: str) -> str:
+    wanted = name.casefold()
+    for key, value in headers.items():
+        if key.casefold() == wanted:
+            return str(value)
+    return ""
+
+
 def _token_from_request(target: str, headers: dict[str, str]) -> str:
     parts = urlsplit(target)
     for key, value in parse_qsl(parts.query, keep_blank_values=True):
         if key.casefold() == "x-plex-token" and str(value).strip():
             return str(value).strip()
-    for key, value in headers.items():
-        if key.casefold() == "x-plex-token" and str(value).strip():
-            return str(value).strip()
-    return ""
+    return _header_value(headers, "X-Plex-Token").strip()
 
 
 def _rewrite_target(target: str) -> tuple[str, dict[str, str]]:
@@ -128,6 +236,11 @@ class ProxyState:
         self.policy_file = args.policy
         self.log_path = Path(args.log) if args.log else None
         self.lock = threading.Lock()
+        self.tls_context: ssl.SSLContext | None = None
+        self.tls_p12: Path | None = None
+        if args.plex_tls_auto:
+            appdata = _find_plex_appdata(args.plex_appdata)
+            self.tls_context, self.tls_p12 = _build_plex_tls_context(appdata)
 
     def should_filter(self, target: str, headers: dict[str, str]) -> bool:
         if not _is_playback_path(urlsplit(target).path):
@@ -189,9 +302,23 @@ def _tunnel(a: socket.socket, b: socket.socket) -> None:
 class PlexProxyHandler(socketserver.BaseRequestHandler):
     def handle(self) -> None:
         state: ProxyState = self.server.state  # type: ignore[attr-defined]
-        client = self.request
-        client.settimeout(60.0)
+        raw_client = self.request
+        raw_client.settimeout(60.0)
+        client = raw_client
+        transport = "http"
         try:
+            try:
+                first_byte = raw_client.recv(1, socket.MSG_PEEK)
+            except OSError:
+                first_byte = b""
+            if first_byte == b"\x16":
+                if state.tls_context is None:
+                    state.log(f"ERROR client={self.client_address[0]} tls-request-without---plex-tls-auto")
+                    return
+                client = state.tls_context.wrap_socket(raw_client, server_side=True)
+                client.settimeout(60.0)
+                transport = "https"
+
             head, rest = _read_request(client)
             if not head:
                 return
@@ -204,7 +331,7 @@ class PlexProxyHandler(socketserver.BaseRequestHandler):
             headers = _headers_dict(lines[1:])
             filtered = state.should_filter(target, headers)
             rewritten_target, changed = _rewrite_target(target) if filtered else (target, {})
-            upgrade = str(headers.get("Upgrade") or headers.get("upgrade") or "").casefold() == "websocket"
+            upgrade = _header_value(headers, "Upgrade").casefold() == "websocket"
 
             out_headers: list[bytes] = []
             saw_host = False
@@ -232,13 +359,12 @@ class PlexProxyHandler(socketserver.BaseRequestHandler):
                 out_headers.append(b"Connection: close")
 
             content_length = 0
-            for key, value in headers.items():
-                if key.casefold() == "content-length":
-                    try:
-                        content_length = max(0, int(value))
-                    except ValueError:
-                        content_length = 0
-                    break
+            raw_length = _header_value(headers, "Content-Length")
+            if raw_length:
+                try:
+                    content_length = max(0, int(raw_length))
+                except ValueError:
+                    content_length = 0
             body = bytearray(rest)
             while len(body) < content_length:
                 chunk = client.recv(min(65536, content_length - len(body)))
@@ -253,13 +379,13 @@ class PlexProxyHandler(socketserver.BaseRequestHandler):
                 upstream.sendall(first + b"\r\n".join(out_headers) + b"\r\n\r\n" + bytes(body))
                 if filtered:
                     state.log(
-                        "FILTERED client=%s method=%s target=%s set=%s"
-                        % (self.client_address[0], method, _redact_target(rewritten_target), json.dumps(changed, sort_keys=True))
+                        "FILTERED transport=%s client=%s method=%s target=%s set=%s"
+                        % (transport, self.client_address[0], method, _redact_target(rewritten_target), json.dumps(changed, sort_keys=True))
                     )
                 elif _is_playback_path(urlsplit(target).path):
                     state.log(
-                        "PASSTHRU client=%s method=%s target=%s"
-                        % (self.client_address[0], method, _redact_target(target))
+                        "PASSTHRU transport=%s client=%s method=%s target=%s"
+                        % (transport, self.client_address[0], method, _redact_target(target))
                     )
                 if upgrade:
                     _tunnel(client, upstream)
@@ -274,6 +400,8 @@ class PlexProxyHandler(socketserver.BaseRequestHandler):
                     upstream.close()
                 except Exception:
                     pass
+        except ssl.SSLError as exc:
+            state.log(f"ERROR client={self.client_address[0]} TLS {exc}")
         except Exception as exc:
             state.log(f"ERROR client={self.client_address[0]} {type(exc).__name__}: {exc}")
 
@@ -291,18 +419,30 @@ def main() -> int:
     parser.add_argument("--upstream-port", type=int, default=32400)
     parser.add_argument("--force-all", action="store_true", help="Filter every universal decision/start request through this proxy")
     parser.add_argument("--policy", help="JSON policy containing filtered_token_sha256 entries")
+    parser.add_argument("--plex-tls-auto", action="store_true", help="Terminate Plex HTTPS using the server's own plex.direct P12 certificate")
+    parser.add_argument("--plex-appdata", help="Explicit Plex Media Server appdata directory")
     parser.add_argument("--log", default="/volume1/docker/censorarr-test/work/plex-policy-proxy.log")
     args = parser.parse_args()
 
     if not args.force_all and not args.policy:
         parser.error("use --force-all for the development proof or provide --policy")
 
-    state = ProxyState(args)
-    server = ThreadingProxy((args.listen_host, args.listen_port), PlexProxyHandler)
+    try:
+        state = ProxyState(args)
+    except Exception as exc:
+        print(f"ERROR: proxy preflight failed: {exc}", file=sys.stderr)
+        return 2
+
+    try:
+        server = ThreadingProxy((args.listen_host, args.listen_port), PlexProxyHandler)
+    except OSError as exc:
+        print(f"ERROR: could not listen on {args.listen_host}:{args.listen_port}: {exc}", file=sys.stderr)
+        return 3
     server.state = state  # type: ignore[attr-defined]
+    tls_mode = f"plex:{state.tls_p12.name}" if state.tls_p12 is not None else "off"
     state.log(
         f"START listen={args.listen_host}:{args.listen_port} upstream={args.upstream_host}:{args.upstream_port} "
-        f"mode={'force-all' if args.force_all else 'token-policy'}"
+        f"mode={'force-all' if args.force_all else 'token-policy'} tls={tls_mode}"
     )
     try:
         server.serve_forever(poll_interval=0.5)
