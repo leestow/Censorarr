@@ -1,7 +1,7 @@
 (() => {
   const ID='censorarrLiveMuteSettings';
   let formLoaded=false, formDirty=false;
-  const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot',"'":'&#39;'}[c]));
   async function req(path, options={}){
     const r=await fetch(path,{credentials:'same-origin',headers:{'Content-Type':'application/json'},...options});
     let data={}; try{data=await r.json()}catch(_){ }
@@ -83,4 +83,15 @@
   }
   function boot(){let tries=0;const timer=setInterval(()=>{tries++;if(ensure()){clearInterval(timer);load();setInterval(load,2500)}else if(tries>40)clearInterval(timer)},250)}
   if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',boot,{once:true});else boot();
+})();
+
+/* Navigation cleanup is kept separate so it can evolve without touching the live-mute controller. */
+(() => {
+  if (document.querySelector('script[data-censorarr-nav-cleanup]')) return;
+  const s = document.createElement('script');
+  s.dataset.censorarrNavCleanup = '1';
+  s.src = '/assets/ui-nav-cleanup.js?v=1';
+  s.async = false;
+  s.onerror = () => console.warn('Censorarr navigation cleanup could not load');
+  document.head.appendChild(s);
 })();
