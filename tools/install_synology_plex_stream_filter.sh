@@ -47,9 +47,17 @@ mkdir -p "$CENSORARR_ROOT/config" "$CENSORARR_ROOT/work"
 printf '%s\n' "$TARGET_MEDIA" > "$ALLOWLIST"
 chmod 644 "$ALLOWLIST" 2>/dev/null || true
 
-# Plex runs as PlexMediaServer, not root. Pre-create a writable diagnostic log
-# so a missing log actually means the shim was not invoked rather than a simple
-# permissions failure. Keep the work directory traversable too.
+# Plex runs as PlexMediaServer, not root. The Censorarr test root may be mode 700
+# on Synology, which blocks Plex from traversing into config/reports even when the
+# files themselves are readable. Grant traverse-only access at the root; do not
+# grant directory listing/read access there. The config/report directories remain
+# read/traverse so Plex can open only the explicitly named files the shim needs.
+chmod o+x "$CENSORARR_ROOT" 2>/dev/null || true
+chmod o+rx "$CENSORARR_ROOT/config" 2>/dev/null || true
+chmod o+rx "$CENSORARR_ROOT/config/reports" 2>/dev/null || true
+
+# Pre-create a writable diagnostic log so a missing log actually means the shim
+# was not invoked rather than a simple permissions failure.
 chmod 755 "$CENSORARR_ROOT/work" 2>/dev/null || true
 touch "$LOG"
 chmod 666 "$LOG" 2>/dev/null || true
