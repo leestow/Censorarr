@@ -1,7 +1,7 @@
 (() => {
   const ID='censorarrLiveMuteSettings';
   let formLoaded=false, formDirty=false;
-  const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot',"'":'&#39;'}[c]));
+  const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
   async function req(path, options={}){
     const r=await fetch(path,{credentials:'same-origin',headers:{'Content-Type':'application/json'},...options});
     let data={}; try{data=await r.json()}catch(_){ }
