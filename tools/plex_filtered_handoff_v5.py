@@ -197,6 +197,8 @@ def main() -> int:
             args.listen_port,
             args.policy_host,
             args.policy_port,
+            args.plex_host,
+            args.plex_port,
             state.tls_p12.name,
             args.allowlist,
         )
