@@ -5,7 +5,7 @@ The installer temporarily places this script at Plex's `Plex Transcoder` path an
 renames the original binary to `Plex Transcoder.censorarr-real`.
 
 For explicitly allowlisted media only, the shim reads Censorarr report JSON files,
-converts saved mute ranges into an FFmpeg `volume` timeline expression, injects it
+converts saved mute ranges into FFmpeg `volume` timeline expressions, injects them
 into Plex's existing audio filter graph, and then `exec()`s the untouched original
 Plex Transcoder. Any parsing/rewrite failure falls open to the original argv.
 
@@ -75,6 +75,7 @@ FALLBACK_LOG_PATH = Path("/tmp/censorarr-plex-transcoder-shim.log")
 LEAD_MS = _int_setting("CENSORARR_STREAM_FILTER_LEAD_MS", "lead_ms", 35)
 TAIL_MS = _int_setting("CENSORARR_STREAM_FILTER_TAIL_MS", "tail_ms", 35)
 JOIN_GAP_MS = _int_setting("CENSORARR_STREAM_FILTER_JOIN_GAP_MS", "join_gap_ms", 20)
+MAX_TERMS_PER_VOLUME_FILTER = 80
 
 MEDIA_EXTENSIONS = {
     ".mkv", ".mp4", ".m4v", ".mov", ".avi", ".ts", ".m2ts", ".mpg", ".mpeg", ".webm",
@@ -223,8 +224,12 @@ def _num(value: float) -> str:
 
 def _volume_filter(ranges: Iterable[tuple[float, float]]) -> str:
     rows = [(a, b) for a, b in ranges if b > a]
-    enabled = "+".join(f"between(t,{_num(a)},{_num(b)})" for a, b in rows)
-    return f"volume=volume=0:enable='{enabled}'"
+    filters: list[str] = []
+    for idx in range(0, len(rows), MAX_TERMS_PER_VOLUME_FILTER):
+        batch = rows[idx:idx + MAX_TERMS_PER_VOLUME_FILTER]
+        enabled = "+".join(f"between(t,{_num(a)},{_num(b)})" for a, b in batch)
+        filters.append(f"volume=volume=0:enable='{enabled}'")
+    return ",".join(filters)
 
 
 def _audio_filter_slot(argv: list[str]) -> int | None:
@@ -276,9 +281,10 @@ def _rewrite(argv: list[str]) -> tuple[list[str], str]:
     prefix = graph[:match.start()].rstrip()
     out = list(argv)
     out[slot] = f"{prefix},{_volume_filter(filtered)}{label}"
+    filter_count = (len(filtered) + MAX_TERMS_PER_VOLUME_FILTER - 1) // MAX_TERMS_PER_VOLUME_FILTER
     return out, (
         f"FILTERED media={media.name} report={report.name} raw={len(raw)} merged={len(merged)} "
-        f"injected={len(filtered)} seek={seek:.3f} timeline={timeline}"
+        f"injected={len(filtered)} filters={filter_count} seek={seek:.3f} timeline={timeline}"
     )
 
 
