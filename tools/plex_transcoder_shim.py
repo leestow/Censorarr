@@ -5,7 +5,7 @@ The installer temporarily places this script at Plex's `Plex Transcoder` path an
 renames the original binary to `Plex Transcoder.censorarr-real`.
 
 For explicitly allowlisted media only, the shim reads Censorarr report JSON files,
-converts saved mute ranges into FFmpeg `volume` timeline expressions, injects them
+converts saved mute ranges into FFmpeg per-frame `volume` expressions, injects them
 into Plex's existing audio filter graph, and then `exec()`s the untouched original
 Plex Transcoder. Any parsing/rewrite failure falls open to the original argv.
 
@@ -227,8 +227,11 @@ def _volume_filter(ranges: Iterable[tuple[float, float]]) -> str:
     filters: list[str] = []
     for idx in range(0, len(rows), MAX_TERMS_PER_VOLUME_FILTER):
         batch = rows[idx:idx + MAX_TERMS_PER_VOLUME_FILTER]
-        enabled = "+".join(f"between(t,{_num(a)},{_num(b)})" for a, b in batch)
-        filters.append(f"volume=volume=0:enable='{enabled}'")
+        active = "+".join(f"between(t,{_num(a)},{_num(b)})" for a, b in batch)
+        # Evaluate every audio frame and explicitly restore unity gain outside mute
+        # windows. This avoids relying on FFmpeg timeline-enable state transitions,
+        # which can remain latched on some Plex/direct-stream command shapes.
+        filters.append(f"volume=volume='if(gt({active},0),0,1)':eval=frame")
     return ",".join(filters)
 
 
@@ -284,7 +287,7 @@ def _rewrite(argv: list[str]) -> tuple[list[str], str]:
     filter_count = (len(filtered) + MAX_TERMS_PER_VOLUME_FILTER - 1) // MAX_TERMS_PER_VOLUME_FILTER
     return out, (
         f"FILTERED media={media.name} report={report.name} raw={len(raw)} merged={len(merged)} "
-        f"injected={len(filtered)} filters={filter_count} seek={seek:.3f} timeline={timeline}"
+        f"injected={len(filtered)} filters={filter_count} seek={seek:.3f} timeline={timeline} volume_mode=frame-explicit"
     )
 
 
