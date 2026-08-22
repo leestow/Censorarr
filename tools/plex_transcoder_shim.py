@@ -36,6 +36,7 @@ LOG_PATH = Path(os.environ.get(
     "CENSORARR_STREAM_FILTER_LOG",
     "/volume1/docker/censorarr-test/work/plex-transcoder-shim.log",
 ))
+FALLBACK_LOG_PATH = Path("/tmp/censorarr-plex-transcoder-shim.log")
 
 LEAD_MS = int(os.environ.get("CENSORARR_STREAM_FILTER_LEAD_MS", "35") or 35)
 TAIL_MS = int(os.environ.get("CENSORARR_STREAM_FILTER_TAIL_MS", "35") or 35)
@@ -47,14 +48,22 @@ MEDIA_EXTENSIONS = {
 OUTPUT_LABEL_RE = re.compile(r"(\[[^\[\]]+\])\s*$")
 
 
-def log(message: str) -> None:
+def _write_log(path: Path, line: str) -> bool:
     try:
-        LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
-        with LOG_PATH.open("a", encoding="utf-8") as fh:
-            stamp = time.strftime("%Y-%m-%d %H:%M:%S")
-            fh.write(f"{stamp} pid={os.getpid()} {message}\n")
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("a", encoding="utf-8") as fh:
+            fh.write(line)
+        return True
     except Exception:
-        pass
+        return False
+
+
+def log(message: str) -> None:
+    stamp = time.strftime("%Y-%m-%d %H:%M:%S")
+    line = f"{stamp} pid={os.getpid()} uid={os.geteuid()} {message}\n"
+    if _write_log(LOG_PATH, line):
+        return
+    _write_log(FALLBACK_LOG_PATH, line)
 
 
 def _read_json(path: Path) -> dict[str, Any] | None:
