@@ -85,13 +85,84 @@
   if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',boot,{once:true});else boot();
 })();
 
-/* Navigation cleanup is kept separate so it can evolve without touching the live-mute controller. */
+/* Keep sidebar destinations distinct: Processing Rules owns detection settings, while Logs is a log-only view. */
 (() => {
-  if (document.querySelector('script[data-censorarr-nav-cleanup]')) return;
-  const s = document.createElement('script');
-  s.dataset.censorarrNavCleanup = '1';
-  s.src = '/assets/ui-nav-cleanup.js?v=1';
-  s.async = false;
-  s.onerror = () => console.warn('Censorarr navigation cleanup could not load');
-  document.head.appendChild(s);
+  const q = (s, root=document) => root.querySelector(s);
+  const qa = (s, root=document) => [...root.querySelectorAll(s)];
+
+  function addStyles(){
+    if(q('#fsNavCleanupStyles'))return;
+    const style=document.createElement('style');style.id='fsNavCleanupStyles';
+    style.textContent=`
+      #fsOperationsPane.fs-nav-logs .fs-ops-toolbar,
+      #fsOperationsPane.fs-nav-logs .fs-nav-status-grid,
+      #fsOperationsPane.fs-nav-logs .fs-nav-queue-panel{display:none!important}
+      #fsOperationsPane.fs-nav-logs .fs-nav-bottom-grid{grid-template-columns:minmax(0,1fr)!important}
+      #fsOperationsPane.fs-nav-logs .fs-nav-log-panel{grid-column:1/-1!important}
+      #fsOperationsPane.fs-nav-gpu .fs-ops-segment{display:none!important}
+    `;document.head.appendChild(style);
+  }
+
+  function removeDuplicateDetectionNav(){
+    qa('[data-polish-action="settings:detection"]').forEach(el=>el.remove());
+    qa('[data-final-action="settings:detection"]').forEach(el=>el.remove());
+  }
+
+  function tagOperationsLayout(){
+    const pane=q('#fsOperationsPane');if(!pane)return null;
+    const grids=qa(':scope > .fs-ops-grid',pane);
+    grids[0]?.classList.add('fs-nav-status-grid');
+    grids[1]?.classList.add('fs-nav-bottom-grid');
+    if(grids[1]){
+      const panels=qa(':scope > .fs-ops-panel',grids[1]);
+      panels[0]?.classList.add('fs-nav-log-panel');
+      panels[1]?.classList.add('fs-nav-queue-panel');
+    }
+    return pane;
+  }
+
+  function currentOperationsMode(){
+    if(q('[data-polish-action="gpu"].active,[data-final-action="gpu"].active'))return 'gpu';
+    if(q('[data-polish-action="logs"].active,[data-final-action="logs"].active'))return 'logs';
+    const title=q('#pageTitle')?.textContent?.trim().toLowerCase()||'';
+    if(title==='gpu worker')return 'gpu';
+    if(title==='live logs'||title==='logs')return 'logs';
+    return '';
+  }
+
+  function applyOperationsMode(){
+    const pane=tagOperationsLayout();if(!pane||!pane.classList.contains('active'))return;
+    const mode=currentOperationsMode();
+    pane.classList.toggle('fs-nav-gpu',mode==='gpu');
+    pane.classList.toggle('fs-nav-logs',mode==='logs');
+    const heading=q('.fs-nav-log-panel .fs-ops-log-head h2');
+    const local=q('#fsOpsLogLocal'),gpu=q('#fsOpsLogGpu');
+    if(mode==='gpu'){
+      if(heading&&heading.textContent!=='GPU Worker Log')heading.textContent='GPU Worker Log';
+      if(gpu&&!gpu.classList.contains('active'))gpu.click();
+    }else if(mode==='logs'){
+      if(heading&&heading.textContent!=='Live Logs')heading.textContent='Live Logs';
+      if(local&&!local.classList.contains('active'))local.click();
+    }
+  }
+
+  function normalizeProcessingRules(){
+    const detection=q('.settings-page[data-settings="detection"].active');if(!detection)return;
+    const title=q('#pageTitle'),subtitle=q('#pageSubtitle');
+    if(title&&title.textContent!=='Processing Rules')title.textContent='Processing Rules';
+    const text='Profanity detection, mute timing, rescue behavior, and CLEAN audio output';
+    if(subtitle&&subtitle.textContent!==text)subtitle.textContent=text;
+  }
+
+  function apply(){addStyles();removeDuplicateDetectionNav();tagOperationsLayout();applyOperationsMode();normalizeProcessingRules();}
+
+  function boot(){
+    apply();
+    document.addEventListener('click',()=>setTimeout(apply,0),true);
+    const title=q('#pageTitle');if(title)new MutationObserver(apply).observe(title,{childList:true,characterData:true,subtree:true});
+    const nav=q('.side-nav');if(nav)new MutationObserver(apply).observe(nav,{childList:true,subtree:true,attributes:true,attributeFilter:['class']});
+    setInterval(apply,1500);
+  }
+
+  if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',()=>setTimeout(boot,400));else setTimeout(boot,400);
 })();
