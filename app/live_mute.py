@@ -31,6 +31,14 @@ _SESSION_CLOCKS: dict[str, dict[str, Any]] = {}
 _EXTRA_ROUTES_INSTALLED = False
 _SIMULATION_RUNTIME = False
 
+# Plex Web often advances /status/sessions viewOffset in coarse heartbeats.  Treat
+# small discrepancies as heartbeat quantization, not as real seeks.  Rewinds are
+# always honored immediately; large forward discontinuities are treated as seeks.
+_CLOCK_SEEK_ERROR_MS = 4000
+_CLOCK_FORWARD_SEEK_EXTRA_MS = 3000
+_CLOCK_BACKWARD_JITTER_MS = 250
+_CLOCK_MAX_HEARTBEAT_CORRECTION_MS = 120
+
 
 def _first(value: Any) -> dict:
     return _impl._first(value)
@@ -53,7 +61,6 @@ def _live_cfg(cfg: dict) -> dict[str, Any]:
     out = _ORIGINAL_LIVE_CFG(cfg)
     out["simulation_mode"] = _simulation_enabled(cfg)
     _SIMULATION_RUNTIME = bool(out["simulation_mode"])
-    # Simulation never needs a readable volume because no player command is sent.
     if out["simulation_mode"]:
         out["require_volume_probe"] = False
     return out
@@ -66,7 +73,6 @@ def _save_settings(core, patch: dict[str, Any]) -> dict[str, Any]:
         tmp = core.CONFIG.with_suffix(".tmp")
         tmp.write_text(core.yaml.safe_dump(raw, sort_keys=False), encoding="utf-8")
         os.replace(tmp, core.CONFIG)
-    # The original saver handles all existing fields and preserves unknown fields.
     return _ORIGINAL_SAVE_SETTINGS(core, patch)
 
 
@@ -77,15 +83,12 @@ def _session_key(session: dict) -> str:
 def _set_volume(session: dict, cfg: dict, volume: int, preferred_base: str = "") -> bool:
     key = _session_key(session)
     if _simulation_enabled(cfg):
-        # Run the exact same scheduler/state transitions, but stop at the final command.
         if int(volume) == 0 and key:
             _SIMULATED_ACTIVE_KEYS.add(key)
         elif int(volume) > 0 and key:
             _SIMULATED_ACTIVE_KEYS.discard(key)
         return True
 
-    # If Simulation Mode is switched off while a simulated mute window is active,
-    # swallow the pending restore too. Never let a dry-run transition touch volume.
     if key and key in _SIMULATED_ACTIVE_KEYS and int(volume) > 0:
         _SIMULATED_ACTIVE_KEYS.discard(key)
         _SIMULATED_RESTORE_EVENT_KEYS.add(key)
@@ -183,47 +186,95 @@ def _parse_sessions(cfg: dict) -> list[dict[str, Any]]:
     return out
 
 
-def _session_timeline(session: dict) -> dict[str, Any]:
-    """Smooth clock built from Plex's coarse /status/sessions viewOffset samples.
+def _predicted_at(clock: dict[str, Any], when_mono: float) -> int:
+    position = int(clock.get("anchor_position") or 0)
+    if str(clock.get("anchor_state") or "") == "playing":
+        position += int(max(0.0, when_mono - float(clock.get("anchor_mono") or when_mono)) * 1000)
+    return max(0, position)
 
-    Some Plex clients only advance viewOffset every several seconds. Repeated identical
-    samples must NOT re-anchor the clock, otherwise a sub-second mute window can never
-    be crossed. We anchor once, advance with monotonic time, and only re-anchor when
-    Plex reports a genuinely new position or playback state (including seeks/pauses).
+
+def _session_timeline(session: dict) -> dict[str, Any]:
+    """Seek-aware smooth clock for coarse Plex /status/sessions samples.
+
+    Plex Web can repeat one viewOffset for several seconds and then jump forward.
+    The local monotonic clock therefore remains authoritative during ordinary
+    playback. New server samples are used to detect real seeks/state changes and
+    to make only a tiny bounded correction for normal heartbeat quantization.
     """
     now = time.monotonic()
     observed = float(session.get("observed_mono") or now)
     state = str(session.get("state") or "").lower()
     server_position = max(0, int(session.get("view_offset_ms") or 0))
-    key = _session_key(session) or f"{session.get('player')}|{session.get('local_file')}"
+    media_file = str(session.get("local_file") or "")
+    key = _session_key(session) or f"{session.get('player')}|{media_file}"
 
     clock = _SESSION_CLOCKS.get(key)
-    if clock is None:
+    if clock is None or str(clock.get("media_file") or "") != media_file:
         clock = {
+            "media_file": media_file,
             "server_position": server_position,
             "server_state": state,
+            "server_observed_mono": observed,
             "anchor_position": server_position,
             "anchor_mono": observed,
+            "anchor_state": state,
             "last_seen_mono": now,
+            "last_sync_reason": "initial",
         }
         _SESSION_CLOCKS[key] = clock
     else:
-        # A changed server sample is meaningful: normal Plex progress update, seek,
-        # pause/resume, or playback-state transition. Re-anchor only on that change.
-        if server_position != int(clock.get("server_position") or 0) or state != str(clock.get("server_state") or ""):
+        old_server_position = int(clock.get("server_position") or 0)
+        old_server_state = str(clock.get("server_state") or "")
+        old_server_observed = float(clock.get("server_observed_mono") or observed)
+        sample_changed = server_position != old_server_position or state != old_server_state
+
+        if sample_changed:
+            predicted = _predicted_at(clock, observed)
+            error_ms = server_position - predicted
+            observed_elapsed_ms = max(0, int((observed - old_server_observed) * 1000))
+            server_advance_ms = server_position - old_server_position
+
+            state_changed = state != old_server_state
+            backward_seek = server_position < old_server_position - _CLOCK_BACKWARD_JITTER_MS
+            paused_position_change = state != "playing" and server_position != old_server_position
+            forward_seek = (
+                state == "playing"
+                and server_advance_ms - observed_elapsed_ms > _CLOCK_FORWARD_SEEK_EXTRA_MS
+            )
+            large_discontinuity = abs(error_ms) >= _CLOCK_SEEK_ERROR_MS
+
+            if state_changed or backward_seek or paused_position_change or forward_seek or large_discontinuity:
+                # Real transport change: honor Plex immediately.
+                clock.update({
+                    "anchor_position": server_position,
+                    "anchor_mono": observed,
+                    "anchor_state": state,
+                    "last_sync_reason": "seek/state",
+                })
+            else:
+                # Ordinary coarse heartbeat. Preserve continuous local playback and
+                # only nudge a tiny amount so the UI/scheduler never jumps seconds.
+                correction = max(
+                    -_CLOCK_MAX_HEARTBEAT_CORRECTION_MS,
+                    min(_CLOCK_MAX_HEARTBEAT_CORRECTION_MS, error_ms),
+                )
+                clock.update({
+                    "anchor_position": max(0, predicted + correction),
+                    "anchor_mono": observed,
+                    "anchor_state": state,
+                    "last_sync_reason": "heartbeat",
+                })
+
             clock.update({
                 "server_position": server_position,
                 "server_state": state,
-                "anchor_position": server_position,
-                "anchor_mono": observed,
+                "server_observed_mono": observed,
             })
+
         clock["last_seen_mono"] = now
 
-    position = int(clock.get("anchor_position") or 0)
-    if state == "playing":
-        position += int(max(0.0, now - float(clock.get("anchor_mono") or now)) * 1000)
+    position = _predicted_at(clock, now)
 
-    # Opportunistic cleanup so abandoned Plex sessions do not accumulate forever.
     if len(_SESSION_CLOCKS) > 64:
         cutoff = now - 3600.0
         for stale_key in [k for k, v in _SESSION_CLOCKS.items() if float(v.get("last_seen_mono") or 0) < cutoff]:
@@ -233,15 +284,12 @@ def _session_timeline(session: dict) -> dict[str, Any]:
         "time_ms": max(0, position),
         "state": state,
         "volume": None,
-        "controllable": "simulation-viewOffset-smoothed" if _SIMULATION_RUNTIME else "session-viewOffset-smoothed",
+        "controllable": "simulation-viewOffset-seek-aware" if _SIMULATION_RUNTIME else "session-viewOffset-seek-aware",
         "base": "",
     }
 
 
 def _timeline(session: dict, token: str) -> dict[str, Any] | None:
-    # Simulation must never wait on Plex Companion ports. Those failed network
-    # probes can take longer than an entire profanity window and make the dry-run
-    # scheduler miss the event. Use the smoothed server-session clock immediately.
     if _SIMULATION_RUNTIME:
         return _session_timeline(session)
 
