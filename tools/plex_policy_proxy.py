@@ -5,7 +5,7 @@ The proxy listens on a separate port and forwards requests to Plex Media Server.
 For selected universal transcode decision/start requests it rewrites:
 
   directPlay=0
-  directStream=1
+  directStream=0
   directStreamAudio=0
   copyts=1
 
@@ -23,6 +23,7 @@ import argparse
 import hashlib
 import json
 import os
+import re
 import select
 import shutil
 import socket
@@ -40,11 +41,12 @@ from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 UNIVERSAL_PREFIX = "/video/:/transcode/universal/"
 FILTER_VALUES = {
     "directPlay": "0",
-    "directStream": "1",
+    "directStream": "0",
     "directStreamAudio": "0",
     "copyts": "1",
 }
 MAX_HEADER = 1024 * 1024
+MAX_DECISION_PROBE = 256 * 1024
 PLEX_APPDATA_CANDIDATES = (
     "/volume1/PlexMediaServer/AppData/Plex Media Server",
     "/var/packages/PlexMediaServer/shares/PlexMediaServer/AppData/Plex Media Server",
@@ -168,6 +170,10 @@ def _is_playback_path(path: str) -> bool:
     return leaf == "decision" or leaf.startswith("start")
 
 
+def _is_decision_path(path: str) -> bool:
+    return str(path).casefold() == (UNIVERSAL_PREFIX + "decision").casefold()
+
+
 def _headers_dict(lines: list[bytes]) -> dict[str, str]:
     out: dict[str, str] = {}
     for raw in lines:
@@ -228,12 +234,30 @@ def _redact_target(target: str) -> str:
     return urlunsplit((parts.scheme, parts.netloc, parts.path, urlencode(rows, doseq=True), parts.fragment))
 
 
+def _decision_response_summary(raw: bytes) -> str:
+    text = raw.decode("utf-8", "replace")
+    first = text.split("\r\n", 1)[0].strip() or "unknown-status"
+    def values(name: str) -> str:
+        found = re.findall(rf'\b{re.escape(name)}="([^"]+)"', text, flags=re.I)
+        unique: list[str] = []
+        for item in found:
+            if item not in unique:
+                unique.append(item)
+        return ",".join(unique[:8]) or "-"
+    return (
+        f"status={first!r} decision={values('decision')} "
+        f"videoDecision={values('videoDecision')} audioDecision={values('audioDecision')} "
+        f"protocol={values('protocol')} container={values('container')}"
+    )
+
+
 class ProxyState:
     def __init__(self, args: argparse.Namespace):
         self.upstream_host = args.upstream_host
         self.upstream_port = int(args.upstream_port)
         self.force_all = bool(args.force_all)
         self.policy_file = args.policy
+        self.trace_paths = bool(args.trace_paths)
         self.log_path = Path(args.log) if args.log else None
         self.lock = threading.Lock()
         self.tls_context: ssl.SSLContext | None = None
@@ -329,6 +353,12 @@ class PlexProxyHandler(socketserver.BaseRequestHandler):
             except ValueError:
                 return
             headers = _headers_dict(lines[1:])
+            path = urlsplit(target).path
+            if state.trace_paths:
+                state.log(
+                    "TRACE transport=%s client=%s method=%s path=%s"
+                    % (transport, self.client_address[0], method, path)
+                )
             filtered = state.should_filter(target, headers)
             rewritten_target, changed = _rewrite_target(target) if filtered else (target, {})
             upgrade = _header_value(headers, "Upgrade").casefold() == "websocket"
@@ -382,7 +412,7 @@ class PlexProxyHandler(socketserver.BaseRequestHandler):
                         "FILTERED transport=%s client=%s method=%s target=%s set=%s"
                         % (transport, self.client_address[0], method, _redact_target(rewritten_target), json.dumps(changed, sort_keys=True))
                     )
-                elif _is_playback_path(urlsplit(target).path):
+                elif _is_playback_path(path):
                     state.log(
                         "PASSTHRU transport=%s client=%s method=%s target=%s"
                         % (transport, self.client_address[0], method, _redact_target(target))
@@ -390,11 +420,27 @@ class PlexProxyHandler(socketserver.BaseRequestHandler):
                 if upgrade:
                     _tunnel(client, upstream)
                 else:
+                    decision_probe = bytearray()
+                    decision_logged = False
                     while True:
                         chunk = upstream.recv(65536)
                         if not chunk:
                             break
+                        if filtered and _is_decision_path(path) and len(decision_probe) < MAX_DECISION_PROBE:
+                            remaining = MAX_DECISION_PROBE - len(decision_probe)
+                            decision_probe.extend(chunk[:remaining])
+                            if not decision_logged and (b"</MediaContainer>" in decision_probe or len(decision_probe) >= 8192):
+                                state.log(
+                                    "DECISION_RESPONSE client=%s %s"
+                                    % (self.client_address[0], _decision_response_summary(bytes(decision_probe)))
+                                )
+                                decision_logged = True
                         client.sendall(chunk)
+                    if filtered and _is_decision_path(path) and decision_probe and not decision_logged:
+                        state.log(
+                            "DECISION_RESPONSE client=%s %s"
+                            % (self.client_address[0], _decision_response_summary(bytes(decision_probe)))
+                        )
             finally:
                 try:
                     upstream.close()
@@ -421,6 +467,7 @@ def main() -> int:
     parser.add_argument("--policy", help="JSON policy containing filtered_token_sha256 entries")
     parser.add_argument("--plex-tls-auto", action="store_true", help="Terminate Plex HTTPS using the server's own plex.direct P12 certificate")
     parser.add_argument("--plex-appdata", help="Explicit Plex Media Server appdata directory")
+    parser.add_argument("--trace-paths", action="store_true", help="Log request paths and summarized decision responses for debugging")
     parser.add_argument("--log", default="/volume1/docker/censorarr-test/work/plex-policy-proxy.log")
     args = parser.parse_args()
 
@@ -442,7 +489,7 @@ def main() -> int:
     tls_mode = f"plex:{state.tls_p12.name}" if state.tls_p12 is not None else "off"
     state.log(
         f"START listen={args.listen_host}:{args.listen_port} upstream={args.upstream_host}:{args.upstream_port} "
-        f"mode={'force-all' if args.force_all else 'token-policy'} tls={tls_mode}"
+        f"mode={'force-all' if args.force_all else 'token-policy'} tls={tls_mode} trace_paths={'on' if state.trace_paths else 'off'}"
     )
     try:
         server.serve_forever(poll_interval=0.5)
