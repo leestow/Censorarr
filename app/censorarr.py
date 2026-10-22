@@ -30,7 +30,7 @@ import subtitle_assist as subassist
 import remote_asr
 import secrets_store as secret_store
 
-VERSION = "1.6.5"
+VERSION = "1.69.1"
 STOP = False
 
 FAMILY_ALIASES: dict[str, list[str]] = {
@@ -1884,9 +1884,37 @@ def update_heartbeat(status: str = "idle", current: str | None = None, **extra) 
     data["stage_progress"] = stage_progress
     if overall is not None:
         data["overall_progress"] = round(float(overall), 1)
-    tmp = p.with_suffix(".tmp")
-    tmp.write_text(json.dumps(data), encoding="utf-8")
-    os.replace(tmp, p)
+    # Heartbeat persistence is best-effort: a brief Windows reader lock must
+    # never abort a movie's transcription. Unique temporary files also prevent
+    # overlapping updates from clobbering each other's intermediate JSON.
+    tmp = None
+    try:
+        p.parent.mkdir(parents=True, exist_ok=True)
+        with tempfile.NamedTemporaryFile(
+            mode="w", encoding="utf-8", dir=p.parent,
+            prefix=f".{p.name}.", suffix=".tmp", delete=False,
+        ) as handle:
+            tmp = Path(handle.name)
+            json.dump(data, handle)
+        # Windows can deny os.replace while the dashboard is reading the file.
+        # Keep the atomic swap and retry only transient sharing/access errors.
+        for attempt in range(6):
+            try:
+                os.replace(tmp, p)
+                return
+            except OSError as exc:
+                retryable = isinstance(exc, PermissionError) or getattr(exc, "winerror", None) in (5, 32)
+                if not retryable or attempt == 5:
+                    raise
+                time.sleep(0.1)
+    except OSError as exc:
+        logging.warning("Heartbeat update failed (media processing continues): %s", exc)
+    finally:
+        if tmp is not None:
+            try:
+                tmp.unlink(missing_ok=True)
+            except OSError:
+                pass
 
 
 def media_files(cfg: dict) -> Iterable[Path]:
