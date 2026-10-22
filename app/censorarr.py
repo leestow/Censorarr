@@ -1858,7 +1858,6 @@ def _overall_progress(status: str, stage_progress) -> float | None:
 
 def update_heartbeat(status: str = "idle", current: str | None = None, **extra) -> None:
     p = Path("/config/heartbeat.json")
-    p.parent.mkdir(parents=True, exist_ok=True)
     stage_progress = extra.get("progress")
     overall = extra.pop("overall_progress", None)
     if overall is None:
