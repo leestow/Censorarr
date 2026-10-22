@@ -169,7 +169,7 @@ def heartbeat_tests():
                     raise PermissionError(13, "simulated Windows sharing violation")
                 return real_replace(src, dst)
 
-            with mock.patch.object(pc.os, "replace", side_effect=transient_lock), \\
+            with mock.patch.object(pc.os, "replace", side_effect=transient_lock), \
                  mock.patch.object(pc.time, "sleep") as sleep:
                 pc.update_heartbeat("rescue", "movie.mkv", progress=50)
             assert len(attempts) == 3, attempts
@@ -185,8 +185,8 @@ def heartbeat_tests():
                 denied_paths.append(str(src))
                 raise PermissionError(13, "simulated persistent Windows lock")
 
-            with mock.patch.object(pc.os, "replace", side_effect=permanent_lock), \\
-                 mock.patch.object(pc.time, "sleep") as sleep, \\
+            with mock.patch.object(pc.os, "replace", side_effect=permanent_lock), \
+                 mock.patch.object(pc.time, "sleep") as sleep, \
                  mock.patch.object(pc.logging, "warning") as warn:
                 assert pc.update_heartbeat("validating", "movie.mkv", progress=99) is None
             assert len(denied_paths) == 6, denied_paths
