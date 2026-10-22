@@ -1,10 +1,13 @@
 #!/usr/bin/env python3
+import json
+import os
 import subprocess
 import tempfile
 import time
 import sys
 import types
 from pathlib import Path
+from unittest import mock
 
 # Allow parser/matcher/remux construction tests to run in a source checkout that does not
 # have faster-whisper installed. The real Docker image always installs it from requirements.txt.
@@ -136,6 +139,65 @@ def overall_progress_tests():
 
 
 
+def heartbeat_tests():
+    """Issue #5: dashboard file locks must not terminate transcription."""
+    with tempfile.TemporaryDirectory(prefix="censorarr-heartbeat-") as td:
+        heartbeat = Path(td) / "heartbeat.json"
+        original_path = Path
+        real_replace = os.replace
+
+        def heartbeat_path(value, *parts):
+            if str(value) == "/config/heartbeat.json":
+                return heartbeat
+            return original_path(value, *parts)
+
+        with mock.patch.object(pc, "Path", side_effect=heartbeat_path):
+            # Normal atomic write, then monotonic progress for the same movie.
+            pc.update_heartbeat("transcribing", "movie.mkv", progress=70)
+            first = json.loads(heartbeat.read_text(encoding="utf-8"))
+            assert first["status"] == "transcribing", first
+            assert first["stage_progress"] == 70, first
+            pc.update_heartbeat("transcribing", "movie.mkv", progress=20)
+            second = json.loads(heartbeat.read_text(encoding="utf-8"))
+            assert second["overall_progress"] == first["overall_progress"], second
+
+            # Two Windows sharing violations, followed by a successful swap.
+            attempts = []
+            def transient_lock(src, dst):
+                attempts.append(str(src))
+                if len(attempts) <= 2:
+                    raise PermissionError(13, "simulated Windows sharing violation")
+                return real_replace(src, dst)
+
+            with mock.patch.object(pc.os, "replace", side_effect=transient_lock), \
+                 mock.patch.object(pc.time, "sleep") as sleep:
+                pc.update_heartbeat("rescue", "movie.mkv", progress=50)
+            assert len(attempts) == 3, attempts
+            assert sleep.call_count == 2, sleep.call_count
+            updated = json.loads(heartbeat.read_text(encoding="utf-8"))
+            assert updated["status"] == "rescue", updated
+            assert updated["overall_progress"] >= second["overall_progress"], updated
+
+            # A permanently locked destination never propagates an exception.
+            before = heartbeat.read_bytes()
+            denied_paths = []
+            def permanent_lock(src, dst):
+                denied_paths.append(str(src))
+                raise PermissionError(13, "simulated persistent Windows lock")
+
+            with mock.patch.object(pc.os, "replace", side_effect=permanent_lock), \
+                 mock.patch.object(pc.time, "sleep") as sleep, \
+                 mock.patch.object(pc.logging, "warning") as warn:
+                assert pc.update_heartbeat("validating", "movie.mkv", progress=99) is None
+            assert len(denied_paths) == 6, denied_paths
+            assert sleep.call_count == 5, sleep.call_count
+            assert warn.called, "A failed heartbeat write must be logged"
+            assert heartbeat.read_bytes() == before, "Old heartbeat must remain intact"
+            assert attempts[0] != denied_paths[0], "Every update needs its own temporary file"
+            assert not list(Path(td).glob("*.tmp")), "No temporary heartbeat files may remain"
+    print("Windows heartbeat locking/retry/nonfatal/atomic-cleanup tests: PASS")
+
+
 def precision_alignment_tests():
     cfg = {
         'profanity': {'padding_before_ms': 120, 'padding_after_ms': 160},
@@ -262,6 +324,7 @@ def main():
     subtitle_tests(matcher)
     mp4_clean_track_metadata_tests()
     overall_progress_tests()
+    heartbeat_tests()
     precision_alignment_tests()
     schedule_tests()
     media_file_readability_tests()

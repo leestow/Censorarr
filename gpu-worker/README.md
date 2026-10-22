@@ -1,4 +1,4 @@
-# Censorarr GPU Worker 1.6.5
+# Censorarr GPU Worker 1.7.0
 
 The Censorarr GPU Worker is an optional standalone transcription service for Censorarr. It accepts extracted audio from the main Censorarr server, runs Faster-Whisper on an NVIDIA GPU, and returns word timestamps. Detection, review logic, and final media remuxing remain on the main Censorarr server.
 

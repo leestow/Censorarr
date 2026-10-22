@@ -54,6 +54,11 @@ jobs:
           python -m pip install -r requirements.txt
           python -m pip install pyinstaller pillow
 
+      - name: Regression test Windows heartbeat file locking (#5)
+        shell: pwsh
+        run: |
+          python -c "import sys; sys.path.insert(0, 'app'); import selftest; selftest.heartbeat_tests()"
+
       - name: Verify Windows path and Hugging Face cache safeguards
         shell: pwsh
         run: |

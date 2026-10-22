@@ -18,7 +18,7 @@ from typing import Iterable
 mp.freeze_support()
 
 APP_NAME = "Censorarr GPU Worker"
-VERSION = "1.6.5"
+VERSION = "1.7.0"
 DEFAULT_PORT = 9000
 
 WINDOWS = os.name == "nt"

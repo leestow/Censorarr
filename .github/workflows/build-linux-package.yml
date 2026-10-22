@@ -59,6 +59,11 @@ jobs:
           python -m pip install -r requirements.txt
           python -m pip install pyinstaller
 
+      - name: Regression test heartbeat atomic writes (#5)
+        shell: bash
+        run: |
+          python -c "import sys; sys.path.insert(0, 'app'); import selftest; selftest.heartbeat_tests()"
+
       - name: Verify native Linux path mapping
         shell: bash
         run: |

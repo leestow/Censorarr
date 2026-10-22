@@ -18,7 +18,7 @@ import manual_processing
 import plex_metadata_cache
 import worker_preflight_guard
 
-VERSION = "1.6.9"
+VERSION = "1.7.0"
 pc.VERSION = VERSION
 pc.DEFAULT_CONFIG.setdefault("safety", {})["ensure_readable_output"] = True
 

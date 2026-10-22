@@ -15,7 +15,7 @@ from email.message import EmailMessage
 from pathlib import Path
 from typing import Any
 
-VERSION = "1.6.5"
+VERSION = "1.7.0"
 
 _BAZARR_CACHE: dict[str, Any] = {"time": 0.0, "key": None, "items": []}
 _BAZARR_SERIES_CACHE: dict[str, Any] = {"time": 0.0, "key": None, "items": []}

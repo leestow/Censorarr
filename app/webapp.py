@@ -20,7 +20,7 @@ import live_mute
 import updater
 import webapp_core as core
 
-VERSION = "1.6.9"
+VERSION = "1.7.0"
 core.VERSION = VERSION
 core.pc.VERSION = VERSION
 core.pc.DEFAULT_CONFIG.setdefault("safety", {})["ensure_readable_output"] = True
