@@ -1,6 +1,6 @@
 # Changelog
 
-## 1.7.0 (2026-10-22)
+## 1.7.0
 
 - Fixed GitHub issue #5: native Windows transcription no longer fails when the dashboard briefly locks `heartbeat.json` during a status refresh.
 - Kept atomic heartbeat writes but switched to per-update, uniquely named temporary files, closed before replacement.
