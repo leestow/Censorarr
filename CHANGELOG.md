@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.69.1 (2026-10-22)
+
+- Fixed GitHub issue #5: native Windows transcription no longer fails when the dashboard briefly locks `heartbeat.json` during a status refresh.
+- Kept atomic heartbeat writes but switched to per-update, uniquely named temporary files, closed before replacement.
+- Retry transient Windows access/sharing violations (WinError 5/32) up to six total attempts, with 100 ms between retries.
+- Heartbeat filesystem failures now produce a warning and allow transcription, rescue, remux, and validation to continue; the last valid heartbeat remains intact.
+- Added self-tests for normal and monotonic progress updates, transient sharing violations, persistent locks, cleanup of temporary files, and nonfatal failure behavior.
+- Updated core app, worker, native installers, and documentation to the 1.69.1 version identifier.
+
 ## 1.6.9
 
 - Promoted the current family-safe development checkpoint into the 1.6.9 release line.
