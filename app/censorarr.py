@@ -30,7 +30,7 @@ import subtitle_assist as subassist
 import remote_asr
 import secrets_store as secret_store
 
-VERSION = "1.69.1"
+VERSION = "1.6.9.1"
 STOP = False
 
 FAMILY_ALIASES: dict[str, list[str]] = {
