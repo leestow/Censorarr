@@ -17,7 +17,7 @@ import automation_audio_sources
 import fast_metadata_cache
 from dialogue_enhancement import DEFAULTS
 
-DEV_VERSION = "1.6.9.1"
+DEV_VERSION = "1.7.0"
 WIKI_REPO = "leestow/Censorarr"
 WIKI_BRANCH = "family-safe-media"
 WIKI_TTL_SECONDS = 6 * 3600
