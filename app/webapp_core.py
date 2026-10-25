@@ -578,7 +578,8 @@ def preview(path: str, start: float = Query(..., ge=0), end: float = Query(..., 
     center = (start + end) / 2; clip_start = max(0, center - 3.0); duration = min(10.0, max(4.0, end - start + 5.0))
     cmd = ["ffmpeg","-hide_banner","-loglevel","error","-ss",f"{clip_start:.3f}","-i",str(p),"-t",f"{duration:.3f}",
            "-map",f"0:a:{audio_rel}","-ac","2","-ar","44100","-c:a","pcm_s16le","-f","wav","pipe:1"]
-    cp = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    cp = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
     if cp.returncode != 0: raise HTTPException(500, cp.stderr.decode("utf-8","replace")[-500:])
     return Response(cp.stdout, media_type="audio/wav", headers={"Cache-Control":"no-store"})
 
