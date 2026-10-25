@@ -138,6 +138,7 @@ class HandoffState:
         self.lock = threading.RLock()
         self.sessions: dict[tuple[str, str], dict] = {}
         self.pending_decisions: dict[tuple[str, str], threading.Event] = {}
+        self.playback_decision_time: dict[str, tuple[float, str]] = {}
 
         appdata = policy._find_plex_appdata(args.plex_appdata)
         self.tls_context, self.tls_p12 = policy._build_plex_tls_context(appdata)
@@ -178,6 +179,10 @@ class HandoffState:
         started = time.monotonic()
         ready = threading.Event()
         with self.lock:
+            # Timing reference for the first HLS segment on this client. The
+            # gateway reports this as a server-side proxy milestone, not the
+            # moment a TV actually renders the first frame.
+            self.playback_decision_time[client_ip] = (started, key[1])
             prior = self.sessions.get(key)
             if (
                 prior and prior.get("decision_target") == target
