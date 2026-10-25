@@ -45,6 +45,18 @@ class V3State(v2.TimelineHandoffState):
         if entry is not None:
             return entry, "session"
 
+        # Shield occasionally omits X-Plex-Session-Id when opening a media
+        # Part. Give any metadata lookup for this client a short chance to
+        # complete before deciding the request is not eligible for filtering.
+        # Do not impose another wait if lookup_file already awaited this key.
+        if self._key(client_ip, headers) is None:
+            with self.lock:
+                pending = [
+                    event for (address, _session), event in self.pending_decisions.items()
+                    if address == client_ip
+                ]
+            if pending:
+                pending[-1].wait(0.6)
         now = time.monotonic()
         best: dict | None = None
         best_created = -1.0

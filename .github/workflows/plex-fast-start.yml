@@ -1,0 +1,40 @@
+name: Plex Fast Start Regression
+
+on:
+  push:
+    branches:
+      - feat/plex-fast-start-experimental
+    paths:
+      - 'tools/plex_filtered_handoff.py'
+      - 'tools/plex_filtered_handoff_v3.py'
+      - 'tools/plex_transcoder_shim.py'
+      - 'tools/plex_stream_filter_gateway.py'
+      - 'tests/test_plex_fast_start.py'
+      - '.github/workflows/plex-fast-start.yml'
+  pull_request:
+    branches:
+      - family-safe-media
+    paths:
+      - 'tools/plex_filtered_handoff.py'
+      - 'tools/plex_filtered_handoff_v3.py'
+      - 'tools/plex_transcoder_shim.py'
+      - 'tools/plex_stream_filter_gateway.py'
+      - 'tests/test_plex_fast_start.py'
+      - '.github/workflows/plex-fast-start.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  fast-start-regression:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Compile fast-start modules
+        run: |
+          python -m py_compile tools/plex_transcoder_shim.py tools/plex_filtered_handoff.py tools/plex_filtered_handoff_v3.py tools/plex_stream_filter_gateway.py tests/test_plex_fast_start.py
+      - name: Run fast-start tests
+        run: python -m unittest discover -v -s tests -p 'test_plex_fast_start.py'

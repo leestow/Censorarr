@@ -32,6 +32,7 @@ import math
 import re
 import socket
 import sys
+import time
 import xml.etree.ElementTree as ET
 from pathlib import Path
 from urllib.parse import parse_qsl, quote, unquote, urlsplit
@@ -543,16 +544,58 @@ class GatewayHandler(validated.V5Handler):
                 body,
             )
             return
-        super()._forward_normal(
-            state,
-            client,
-            method,
-            target,
-            version,
-            lines,
-            body,
-            upgrade,
+        # Measure the *server-side* handoff to the first HLS video segment.
+        # This is a diagnostic milestone, not the TV's first rendered frame.
+        segment = re.match(
+            r"^/video/:/transcode/universal/session/([^/]+)/base/(\d+)\.(?:ts|m4s)$",
+            path,
+            re.I,
         )
+        first_segment = False
+        segment_start = 0.0
+        if method.upper() == "GET" and segment:
+            now = time.monotonic()
+            client_ip = self.client_address[0]
+            session_id = segment.group(1)
+            key = (client_ip, session_id)
+            with state.lock:
+                seen = state.first_hls_segments
+                if key not in seen:
+                    if len(seen) > 512:
+                        state.first_hls_segments = {
+                            k: stamp for k, stamp in seen.items() if now - stamp < 3600
+                        }
+                    state.first_hls_segments[key] = now
+                    trace = state.playback_decision_time.get(client_ip)
+                    first_segment = True
+            if first_segment:
+                segment_start = now
+                since = (
+                    1000 * (now - trace[0])
+                    if trace is not None and now - trace[0] <= 120
+                    else -1.0
+                )
+                state.log(
+                    "HLS_FIRST_SEGMENT_REQUEST client=%s segment=%s since_decision_ms=%.1f"
+                    % (client_ip, segment.group(2), since)
+                )
+        try:
+            super()._forward_normal(
+                state,
+                client,
+                method,
+                target,
+                version,
+                lines,
+                body,
+                upgrade,
+            )
+        finally:
+            if first_segment:
+                state.log(
+                    "HLS_FIRST_SEGMENT_FINISHED client=%s proxy_transfer_ms=%.1f"
+                    % (self.client_address[0], 1000 * (time.monotonic() - segment_start))
+                )
 
 
 def main() -> int:
@@ -577,6 +620,7 @@ def main() -> int:
         appdata = policy._find_plex_appdata(args.plex_appdata)
         state.subtitle_sessions_root = appdata / "Cache" / "Transcode" / "Sessions"
         state.subtitle_timing = {}
+        state.first_hls_segments = {}
         try:
             root = ET.parse(str(appdata / "Preferences.xml")).getroot()
             state.plex_token = str(root.attrib.get("PlexOnlineToken") or "").strip()
