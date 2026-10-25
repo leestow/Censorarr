@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased — native Windows and shared worker fixes
+
+- Stop Current now removes the active manual queue entry before restarting the worker; stopped jobs should not immediately be picked up again (issue #9).
+- Worker cancellation now attempts to terminate its FFmpeg/FFprobe process tree, using Windows taskkill or a POSIX process group.
+- Clearing the live log uses a visibility marker instead of truncating an active worker log file; the UI, streaming endpoint and log download show messages after the latest clear.
+- Authenticated Windows settings can adopt new local, mapped-drive, and UNC media roots; normal browsing/processing remains restricted to configured roots.
+- Disabled TV folders no longer fail Windows setup because their unused path does not begin with a Linux slash; the wizard displays Windows path guidance.
+- Suppress native Windows subprocess console windows during FFmpeg/FFprobe processing and preview.
+- Do not display an AI worker connection error when Dialogue Enhancement is disabled.
+- Add cross-platform CI syntax checks and regression tests for queue cancellation and log clearing.
+
 ## 1.7.0
 
 - Fixed GitHub issue #5: native Windows transcription no longer fails when the dashboard briefly locks `heartbeat.json` during a status refresh.
