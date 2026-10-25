@@ -78,6 +78,7 @@ class DecisionLatencyTests(unittest.TestCase):
         state = handoff.HandoffState.__new__(handoff.HandoffState)
         state.sessions = {}
         state.pending_decisions = {}
+        state.playback_decision_time = {}
         state.lock = threading.RLock()
         state.plex_host = "127.0.0.1"
         state.plex_port = 32400
