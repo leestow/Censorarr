@@ -248,7 +248,7 @@
     q('#fsOpsLogGpu').onclick=()=>{opsLogMode='gpu';setOpsLogButtons();refreshOpsLog(true);};
     q('#fsOpsScan').onclick=async()=>{try{await apiJson('/api/control/scan-now',{method:'POST'});await poll();}catch(e){alert(e.message)}};
     q('#fsOpsPause').onclick=async()=>{try{await apiJson(latestStatus?.paused?'/api/control/resume':'/api/control/pause',{method:'POST'});await poll();}catch(e){alert(e.message)}};
-    q('#fsOpsStop').onclick=async()=>{if(!confirm('Stop the current media item?'))return;try{await apiJson('/api/control/stop-current',{method:'POST'});await poll();}catch(e){alert(e.message)}};
+    q('#fsOpsStop').onclick=async()=>{if(!confirm('Stop the current media item?'))return;try{const result=await apiJson('/api/control/stop-current',{method:'POST'});if(!result.ok)alert(result.message||'No active media item to stop.');await poll();}catch(e){alert(e.message)}};
     q('#fsOpsClearLog').onclick=async()=>{if(!confirm(`Clear the ${opsLogMode==='gpu'?'GPU worker':'Censorarr'} log?`))return;try{await apiJson(opsLogMode==='gpu'?'/api/integrations/asr/logs/clear':'/api/log/clear',{method:'POST'});q('#fsOpsLog').textContent='';}catch(e){alert(e.message)}};
     q('#fsOpsDownloadLog').onclick=()=>{location.href=opsLogMode==='gpu'?'/api/integrations/asr/logs/download':'/api/log/download';};
   }
@@ -262,7 +262,7 @@
     if(!q('#fsOperationsPane')) return;
     const hb=status?.heartbeat||{},cur=gpu?.current_job && typeof gpu.current_job==='object'?gpu.current_job:null;
     const online=!!gpu?.enabled&&!!gpu?.ok;
-    setText('fsOpsWorkerBadge',status?.worker_alive?(status.paused?'Paused':'Worker online'):'Worker stopped');
+    setText('fsOpsWorkerBadge',status?.worker_alive?(status.paused?(hb.current?'Manual processing · auto paused':'Automatic paused'):'Worker online'):'Worker stopped');
     q('#fsOpsWorkerBadge')?.classList.toggle('good',!!status?.worker_alive);
     setText('fsOpsPause',status?.paused?'Resume automatic':'Pause automatic');
     setText('fsOpsCurrent',hb.current?basename(hb.current):'No media currently processing');
