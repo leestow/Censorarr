@@ -8,6 +8,7 @@ on:
       - 'tools/plex_filtered_handoff.py'
       - 'tools/plex_filtered_handoff_v3.py'
       - 'tools/plex_transcoder_shim.py'
+      - 'tools/plex_stream_filter_gateway.py'
       - 'tests/test_plex_fast_start.py'
       - '.github/workflows/plex-fast-start.yml'
   pull_request:
@@ -17,6 +18,7 @@ on:
       - 'tools/plex_filtered_handoff.py'
       - 'tools/plex_filtered_handoff_v3.py'
       - 'tools/plex_transcoder_shim.py'
+      - 'tools/plex_stream_filter_gateway.py'
       - 'tests/test_plex_fast_start.py'
       - '.github/workflows/plex-fast-start.yml'
 
@@ -33,6 +35,6 @@ jobs:
           python-version: '3.11'
       - name: Compile fast-start modules
         run: |
-          python -m py_compile tools/plex_transcoder_shim.py tools/plex_filtered_handoff.py tools/plex_filtered_handoff_v3.py tests/test_plex_fast_start.py
+          python -m py_compile tools/plex_transcoder_shim.py tools/plex_filtered_handoff.py tools/plex_filtered_handoff_v3.py tools/plex_stream_filter_gateway.py tests/test_plex_fast_start.py
       - name: Run fast-start tests
         run: python -m unittest discover -v -s tests -p 'test_plex_fast_start.py'
