@@ -157,26 +157,60 @@ def _allowlisted(media: Path) -> bool:
 
 
 def _report_for_media(media: Path) -> tuple[Path | None, list[tuple[float, float]]]:
+    """Look up just the matching report(s), not every full transcript JSON.
+
+    Censorarr writes reports as sanitized-media-stem + '-' + path-SHA1[:10].
+    Plex and Censorarr sometimes see different mount paths, so the hash may
+    differ; the filename prefix is the cheapest portable lookup.  Do not guess
+    when two reports represent different media with the same basename.
+    """
     wanted = media.name.casefold()
-    if not wanted:
+    if not wanted or not REPORT_DIR.is_dir():
         return None, []
+    safe_stem = re.sub(r"[^A-Za-z0-9._-]+", "_", media.stem)[:90]
+    if not safe_stem:
+        return None, []
+    prefix = safe_stem + "-"
     try:
-        if not REPORT_DIR.is_dir():
-            return None, []
-        candidates = list(REPORT_DIR.glob("*.json"))
+        candidates = list(REPORT_DIR.glob(prefix + "*.json"))
+        # Synology filenames are often case-sensitive even when Plex metadata
+        # has different casing. Fallback scans *names only*, not JSON bodies.
+        if not candidates:
+            candidates = [
+                p for p in REPORT_DIR.iterdir()
+                if p.is_file() and p.suffix.casefold() == ".json"
+                and p.name.casefold().startswith(prefix.casefold())
+            ]
     except OSError:
         return None, []
-    try:
-        candidates.sort(key=lambda p: p.stat().st_mtime, reverse=True)
-    except OSError:
-        pass
+
+    exact_match: tuple[Path, list[tuple[float, float]]] | None = None
+    basename_matches: list[tuple[Path, list[tuple[float, float]]]] = []
     for candidate in candidates:
+        # Reject non-report files, even if their name shares a prefix.
+        suffix = candidate.stem[len(prefix):]
+        if len(suffix) != 10 or not re.fullmatch(r"[a-fA-F0-9]{10}", suffix):
+            continue
         payload = _read_json(candidate)
         if payload is None:
             continue
         recorded = str(payload.get("file") or "").strip()
-        if recorded and Path(recorded).name.casefold() == wanted:
-            return candidate, _ranges(payload)
+        if not recorded or Path(recorded).name.casefold() != wanted:
+            continue
+        ranges = _ranges(payload)
+        if not ranges:
+            continue
+        if recorded == str(media):
+            exact_match = (candidate, ranges)
+            break
+        basename_matches.append((candidate, ranges))
+
+    if exact_match is not None:
+        return exact_match
+    # Mount-path aliases are common, but identical movie filenames are not
+    # enough evidence to pick an arbitrary report when multiple exist.
+    if len(basename_matches) == 1:
+        return basename_matches[0]
     return None, []
 
 
