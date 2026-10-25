@@ -524,6 +524,7 @@ def run(cmd: list[str], check: bool = True, capture: bool = True) -> subprocess.
             text=True,
             stdout=subprocess.PIPE if capture else None,
             stderr=subprocess.PIPE if capture else None,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
         )
     except subprocess.CalledProcessError as exc:
         if capture and exc.stderr:
@@ -550,6 +551,7 @@ def run_ffmpeg_progress(cmd: list[str], duration_seconds: float | None, progress
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         bufsize=1,
+        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
     )
     last_pct = -1.0
     try:
