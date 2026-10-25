@@ -547,7 +547,7 @@ class GatewayHandler(validated.V5Handler):
         # Measure the *server-side* handoff to the first HLS video segment.
         # This is a diagnostic milestone, not the TV's first rendered frame.
         segment = re.match(
-            r"^/video/:/transcode/universal/session/([^/]+)/base/(\\d+)\\.(?:ts|m4s)$",
+            r"^/video/:/transcode/universal/session/([^/]+)/base/(\d+)\.(?:ts|m4s)$",
             path,
             re.I,
         )
