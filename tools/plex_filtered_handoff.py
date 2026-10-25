@@ -137,6 +137,7 @@ class HandoffState:
         self.log_path = Path(args.log) if args.log else None
         self.lock = threading.RLock()
         self.sessions: dict[tuple[str, str], dict] = {}
+        self.pending_decisions: dict[tuple[str, str], threading.Event] = {}
 
         appdata = policy._find_plex_appdata(args.plex_appdata)
         self.tls_context, self.tls_p12 = policy._build_plex_tls_context(appdata)
@@ -162,6 +163,11 @@ class HandoffState:
         return client_ip, session_id
 
     def remember_decision(self, client_ip: str, target: str, headers: dict[str, str]) -> None:
+        """Do not hold Plex's playback-decision response on a metadata HTTP call.
+
+        Resolve metadata on a worker while the native Plex decision continues.
+        The first file request waits briefly for the worker, bounded to 600 ms.
+        """
         key = self._key(client_ip, headers)
         if key is None:
             return
@@ -169,7 +175,36 @@ class HandoffState:
         token = policy._token_from_request(target, headers).strip()
         if not metadata_path.startswith("/library/metadata/") or not token:
             return
+        started = time.monotonic()
+        ready = threading.Event()
+        with self.lock:
+            prior = self.sessions.get(key)
+            if (
+                prior and prior.get("decision_target") == target
+                and started - float(prior.get("created") or 0) < CACHE_TTL_SECONDS
+            ):
+                return
+            # A newer decision supersedes an in-flight lookup for the same
+            # session. The older worker may finish but cannot overwrite it.
+            self.pending_decisions[key] = ready
+            self.sessions.pop(key, None)
+        thread = threading.Thread(
+            target=self._resolve_decision_metadata,
+            args=(client_ip, target, headers, key, ready, started),
+            name="CensorarrPlexMetadata",
+            daemon=True,
+        )
+        try:
+            thread.start()
+        except RuntimeError:
+            self._resolve_decision_metadata(client_ip, target, headers, key, ready, started)
 
+    def _resolve_decision_metadata(
+        self, client_ip: str, target: str, headers: dict[str, str],
+        key: tuple[str, str], ready: threading.Event, started: float,
+    ) -> None:
+        metadata_path = _query_value(target, "path").strip()
+        token = policy._token_from_request(target, headers).strip()
         try:
             separator = "&" if "?" in metadata_path else "?"
             url = (
@@ -207,7 +242,7 @@ class HandoffState:
                 and basename.casefold() in _allowlist_names(self.allowlist)
             )
             entry = {
-                "created": time.monotonic(),
+                "created": started,
                 "decision_target": target,
                 "part_id": part_id,
                 "file": file_path,
@@ -217,18 +252,28 @@ class HandoffState:
                 "eligible": eligible,
             }
             with self.lock:
-                self.sessions[key] = entry
+                if self.pending_decisions.get(key) is ready:
+                    self.sessions[key] = entry
             self.log(
-                "DECISION_CACHE client=%s session=%s part=%s media=%s size=%s duration_ms=%s eligible=%s"
-                % (client_ip, key[1], part_id or "-", basename or "-", size or "-", duration_ms or "-", "yes" if eligible else "no")
+                "DECISION_CACHE client=%s session=%s part=%s media=%s size=%s duration_ms=%s eligible=%s lookup_ms=%.1f"
+                % (client_ip, key[1], part_id or "-", basename or "-", size or "-", duration_ms or "-", "yes" if eligible else "no", 1000 * (time.monotonic() - started))
             )
         except Exception as exc:
             self.log(f"DECISION_CACHE_FAIL client={client_ip} {type(exc).__name__}: {exc}")
+        finally:
+            with self.lock:
+                if self.pending_decisions.get(key) is ready:
+                    self.pending_decisions.pop(key, None)
+            ready.set()
 
     def lookup_file(self, client_ip: str, headers: dict[str, str], part_id: str) -> dict | None:
         key = self._key(client_ip, headers)
         if key is None:
             return None
+        with self.lock:
+            pending = self.pending_decisions.get(key)
+        if pending is not None and not pending.wait(0.6):
+            self.log(f"DECISION_CACHE_PENDING client={client_ip} session={key[1]} bounded_wait_ms=600")
         with self.lock:
             entry = self.sessions.get(key)
             if entry and time.monotonic() - float(entry.get("created") or 0) > CACHE_TTL_SECONDS:
