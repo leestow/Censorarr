@@ -131,5 +131,50 @@ class LogClearTests(unittest.TestCase):
             self.assertIn(marker, path.read_text())
 
 
+class WindowsMediaRootTests(unittest.TestCase):
+    def test_authenticated_new_root_is_separate_from_browse_restrictions(self):
+        """A new folder is configurable, but browsing remains constrained to old roots."""
+        windows_source = SOURCE.parents[1] / "windows" / "windows_launcher.py"
+        tree = ast.parse(windows_source.read_text(encoding="utf-8"))
+        nodes = [
+            n for n in ast.walk(tree)
+            if isinstance(n, ast.FunctionDef) and n.name in {
+                "safe_media_path_windows", "validate_new_media_root_windows"
+            }
+        ]
+        self.assertEqual(len(nodes), 2)
+
+        class FakeHTTPException(Exception):
+            def __init__(self, code, detail):
+                self.status_code = code
+                self.detail = detail
+
+        namespace = {
+            "_RealPath": Path,
+            "webapp": SimpleNamespace(HTTPException=FakeHTTPException),
+        }
+        for node in nodes:
+            node.decorator_list = []
+        exec(compile(ast.fix_missing_locations(ast.Module(body=nodes, type_ignores=[])),
+                     str(windows_source), "exec"), namespace)
+
+        with tempfile.TemporaryDirectory() as folder:
+            old = Path(folder) / "existing"
+            new = Path(folder) / "new"
+            old.mkdir()
+            new.mkdir()
+            namespace["configured_media_roots"] = lambda: ([old.resolve()], True)
+            namespace["allowed_media_mounts_windows"] = lambda: [old.resolve()]
+            browse = namespace["safe_media_path_windows"]
+            adopt = namespace["validate_new_media_root_windows"]
+
+            self.assertEqual(adopt(str(new)), new.resolve())
+            self.assertEqual(browse(str(old)), old.resolve())
+            with self.assertRaises(FakeHTTPException) as result:
+                browse(str(new))
+            self.assertEqual(result.exception.status_code, 403)
+            with self.assertRaises(FakeHTTPException):
+                adopt("relative-folder")
+
 if __name__ == "__main__":
     unittest.main()
