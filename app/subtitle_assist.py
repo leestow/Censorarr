@@ -127,7 +127,8 @@ def has_usable_source(media: Path, probe: dict, cfg: dict) -> bool:
 
 
 def _run(cmd: list[str]) -> subprocess.CompletedProcess:
-    return subprocess.run(cmd, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    return subprocess.run(cmd, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+                          creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
 
 
 def materialize_best(media: Path, probe: dict, cfg: dict, workdir: Path) -> tuple[Path | None, dict | None, list[dict]]:
