@@ -10,6 +10,7 @@
     ai_worker_cpu_fallback:true
   };
   let aiStatus=null;
+  let dialogueFeatureEnabled=false;
 
   async function request(path,options={}){
     const r=await fetch(path,{credentials:'same-origin',headers:{'Content-Type':'application/json'},...options});
@@ -235,6 +236,13 @@
   }
 
   async function checkAI(){
+    if(!dialogueFeatureEnabled){
+      qa('.fs-ai-worker').forEach(x=>{
+        x.textContent='AI worker not needed — Dialogue Enhancement is disabled';
+        x.classList.remove('good','bad');
+      });
+      return;
+    }
     try{
       aiStatus=await request('/api/dialogue-enhancement/ai-status');
       const ready=!!aiStatus.dialogue_ai;
@@ -248,6 +256,7 @@
     if(loading)return;loading=true;
     try{
       const s=await request('/api/dialogue-enhancement/settings');
+      dialogueFeatureEnabled=s.enabled===true;
       state={
         profanity_source_preference:s.profanity_source_preference||'best_original',
         dialogue_source_preference:s.dialogue_source_preference||'auto_clean',
