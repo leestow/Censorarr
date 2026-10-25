@@ -5,6 +5,7 @@ import json
 import os
 import re
 import secrets
+import signal
 import subprocess
 import threading
 import time
@@ -157,7 +158,7 @@ class WorkerSupervisor:
         with self.lock:
             if self.proc and self.proc.poll() is None: return
             env = os.environ.copy(); env.pop("DRY_RUN", None)
-            self.proc = subprocess.Popen(["python", "/app/censorarr.py"], env=env)
+            self.proc = subprocess.Popen(["python", "/app/censorarr.py"], env=env, start_new_session=(os.name != "nt"))
         if not self.monitor_thread or not self.monitor_thread.is_alive():
             self.monitor_thread = threading.Thread(target=self._monitor, daemon=True, name="worker-supervisor")
             self.monitor_thread.start()
@@ -176,24 +177,79 @@ class WorkerSupervisor:
                 time.sleep(1); self.start()
 
     def stop_process(self, graceful_seconds: float = 2.0):
-        with self.lock: proc = self.proc
-        if not proc or proc.poll() is not None: return
-        proc.terminate()
-        try: proc.wait(timeout=graceful_seconds)
-        except subprocess.TimeoutExpired:
-            proc.kill()
-            try: proc.wait(timeout=2)
-            except Exception: pass
+        with self.lock:
+            proc = self.proc
+            if not proc or proc.poll() is not None:
+                return
+            # Stop the entire FFmpeg/Whisper process tree, not just its Python parent.
+            # Windows' taskkill /T handles console children; POSIX workers use a
+            # dedicated process session so their process group can be terminated.
+            group_leader = False
+            if os.name == "nt":
+                try:
+                    subprocess.run(
+                        ["taskkill", "/PID", str(proc.pid), "/T", "/F"],
+                        stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=8,
+                        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+                        check=False,
+                    )
+                except (OSError, subprocess.TimeoutExpired):
+                    pass
+            else:
+                try:
+                    group_leader = os.getpgid(proc.pid) == proc.pid
+                    if group_leader:
+                        os.killpg(proc.pid, signal.SIGTERM)
+                except (ProcessLookupError, PermissionError):
+                    pass
+            if proc.poll() is None and not group_leader:
+                proc.terminate()
+            try:
+                proc.wait(timeout=graceful_seconds)
+            except subprocess.TimeoutExpired:
+                if group_leader and os.name != "nt":
+                    try:
+                        os.killpg(proc.pid, signal.SIGKILL)
+                    except ProcessLookupError:
+                        pass
+                if proc.poll() is None:
+                    proc.kill()
+                try:
+                    proc.wait(timeout=2)
+                except subprocess.TimeoutExpired:
+                    pass
 
     def restart(self):
         self.stop_process()
         if not self.stopping: self.start()
 
     def stop_current(self) -> dict:
-        hb = read_json(HEARTBEAT, {}); current = hb.get("current")
+        hb = read_json(HEARTBEAT, {})
+        current = hb.get("current")
+        if not current or hb.get("status") in {"idle", "paused", "scanning", "blocked", "setup-required"}:
+            return {"ok": False, "cancelled": None, "message": "No active media job to stop."}
+
+        # A manual job stays at the head of the queue until its handler returns.
+        # Remove its active entry *before* stopping the worker, otherwise the
+        # replacement worker immediately selects it again (and clears cancellation).
+        queue = read_json(QUEUE, [])
+        if isinstance(queue, list):
+            for i, item in enumerate(queue):
+                if isinstance(item, dict) and str(item.get("path") or "") == str(current):
+                    del queue[i]
+                    write_json(QUEUE, queue)
+                    break
+
+        p = Path(current)
+        if p.exists():
+            try:
+                cancelled = read_json(CANCELLED, {})
+                cancelled[str(p)] = {"fingerprint": pc.fingerprint(p), "cancelled_at": time.time()}
+                write_json(CANCELLED, cancelled)
+            except OSError:
+                pass
+
         remote_cancel = None
-        # Cancel the GPU-side child process before killing the local Censorarr worker. This
-        # immediately releases GPU/CPU/RAM instead of leaving an abandoned ASR request running.
         try:
             cfg = pc.load_config(CONFIG)
             if remote_asr.enabled(cfg):
@@ -201,20 +257,18 @@ class WorkerSupervisor:
         except Exception as e:
             remote_cancel = {"ok": False, "cancelled": False, "error": str(e)}
         self.stop_process(graceful_seconds=0.75)
-        if current:
-            p = Path(current)
-            temp_out = p.with_name(p.name + ".censorarr.tmp" + p.suffix)
-            try:
-                if temp_out.exists(): temp_out.unlink()
-            except OSError: pass
-            if p.exists():
-                data = read_json(CANCELLED, {})
-                try:
-                    data[str(p)] = {"fingerprint": pc.fingerprint(p), "cancelled_at": time.time()}; write_json(CANCELLED, data)
-                except OSError: pass
-            state = read_json(STATE, {"files": {}}); state.setdefault("files", {}).setdefault(str(p), {})
-            state["files"][str(p)].update({"status": "cancelled", "time": time.time()}); write_json(STATE, state)
-        self.start(); return {"ok": True, "cancelled": current, "remote_gpu": remote_cancel}
+        temp_out = p.with_name(p.name + ".censorarr.tmp" + p.suffix)
+        try:
+            if temp_out.exists():
+                temp_out.unlink()
+        except OSError:
+            pass
+        state = read_json(STATE, {"files": {}})
+        state.setdefault("files", {}).setdefault(str(p), {}).update({"status": "cancelled", "time": time.time()})
+        write_json(STATE, state)
+        write_json(HEARTBEAT, {"timestamp": time.time(), "status": "idle", "current": None, "version": VERSION})
+        self.start()
+        return {"ok": True, "cancelled": current, "remote_gpu": remote_cancel}
 
     def shutdown(self):
         self.stopping = True; self.stop_process(graceful_seconds=2.0)
@@ -335,21 +389,40 @@ def stop_current(_: bool = Depends(auth)):
     return supervisor.stop_current()
 
 
+# Clearing the UI log should never truncate a file held open by the worker's
+# FileHandler. A delimiter preserves the writer's handle and only hides older entries.
+LOG_CLEAR_MARKER = "=== CENSORARR USER LOG CLEAR BOUNDARY ==="
+
+
+def visible_log_text() -> str:
+    if not LOG.exists():
+        return ""
+    content = LOG.read_text(encoding="utf-8", errors="replace")
+    cut = content.rfind(LOG_CLEAR_MARKER)
+    return content[cut + len(LOG_CLEAR_MARKER):].lstrip("\r\n") if cut >= 0 else content
+
+
 @app.get("/api/log/tail")
 def log_tail(lines: int = Query(250, ge=10, le=5000), _: bool = Depends(auth)):
-    if not LOG.exists(): return {"lines": []}
-    data = LOG.read_text(encoding="utf-8", errors="replace").splitlines(); return {"lines": data[-lines:]}
+    return {"lines": visible_log_text().splitlines()[-lines:]}
 
 
 @app.get("/api/log/download")
 def log_download(_: bool = Depends(auth)):
-    if not LOG.exists(): raise HTTPException(404, "Log not found")
-    return FileResponse(LOG, filename="censorarr.log", media_type="text/plain")
+    if not LOG.exists():
+        raise HTTPException(404, "Log not found")
+    return Response(
+        visible_log_text(), media_type="text/plain",
+        headers={"Content-Disposition": 'attachment; filename="censorarr.log"'},
+    )
 
 
 @app.post("/api/log/clear")
 def log_clear(_: bool = Depends(auth)):
-    LOG.write_text("", encoding="utf-8"); return {"ok": True}
+    LOG.parent.mkdir(parents=True, exist_ok=True)
+    with LOG.open("a", encoding="utf-8") as handle:
+        handle.write("\n" + LOG_CLEAR_MARKER + "\n")
+    return {"ok": True}
 
 
 @app.get("/api/log/stream")
@@ -357,15 +430,22 @@ async def log_stream(request: Request, _: bool = Depends(auth)):
     async def events():
         pos = LOG.stat().st_size if LOG.exists() else 0
         while True:
-            if await request.is_disconnected(): break
+            if await request.is_disconnected():
+                break
             if LOG.exists():
                 size = LOG.stat().st_size
-                if size < pos: pos = 0
+                if size < pos:
+                    pos = 0
                 if size > pos:
                     with LOG.open("r", encoding="utf-8", errors="replace") as f:
-                        f.seek(pos); chunk = f.read(); pos = f.tell()
-                    for line in chunk.splitlines(): yield "data: " + json.dumps(line) + "\n\n"
-            yield ": keepalive\n\n"; await asyncio.sleep(1)
+                        f.seek(pos)
+                        chunk = f.read()
+                        pos = f.tell()
+                    for line in chunk.splitlines():
+                        if line != LOG_CLEAR_MARKER:
+                            yield "data: " + json.dumps(line) + "\n\n"
+            yield ": keepalive\n\n"
+            await asyncio.sleep(1)
     return StreamingResponse(events(), media_type="text/event-stream", headers={"Cache-Control": "no-cache"})
 
 
@@ -498,7 +578,8 @@ def preview(path: str, start: float = Query(..., ge=0), end: float = Query(..., 
     center = (start + end) / 2; clip_start = max(0, center - 3.0); duration = min(10.0, max(4.0, end - start + 5.0))
     cmd = ["ffmpeg","-hide_banner","-loglevel","error","-ss",f"{clip_start:.3f}","-i",str(p),"-t",f"{duration:.3f}",
            "-map",f"0:a:{audio_rel}","-ac","2","-ar","44100","-c:a","pcm_s16le","-f","wav","pipe:1"]
-    cp = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    cp = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
     if cp.returncode != 0: raise HTTPException(500, cp.stderr.decode("utf-8","replace")[-500:])
     return Response(cp.stdout, media_type="audio/wav", headers={"Cache-Control":"no-store"})
 
@@ -812,7 +893,7 @@ async def save_settings(request: Request, _: bool = Depends(auth)):
     if not isinstance(roots,list) or not roots: raise HTTPException(400,"At least one media root is required")
     clean_roots=[]
     for r in roots:
-        rp=safe_media_path(str(r))
+        rp=globals().get("validate_new_media_root", safe_media_path)(str(r))
         if not rp.is_dir(): raise HTTPException(400,f"Media root is not a directory: {rp}")
         clean_roots.append(str(rp))
     raw["media_roots"]=clean_roots
@@ -841,14 +922,14 @@ async def save_settings(request: Request, _: bool = Depends(auth)):
         tv_enabled = bool(tv.get("enabled", False))
         for r in tv_roots:
             if tv_enabled:
-                rp=safe_media_path(str(r))
+                rp=globals().get("validate_new_media_root", safe_media_path)(str(r))
                 if not rp.is_dir(): raise HTTPException(400, f"TV media root is not a directory: {rp}")
                 clean_tv_roots.append(str(rp))
             else:
                 # Keep the intended container path for later without requiring the optional TV mount
                 # to exist while TV processing is disabled.
                 raw_root = str(r).strip() or "/tv"
-                if not raw_root.startswith("/"):
+                if os.name != "nt" and not raw_root.startswith("/"):
                     raise HTTPException(400, "TV media root must be an absolute container path")
                 clean_tv_roots.append(raw_root)
         tv["media_roots"] = clean_tv_roots

@@ -11,6 +11,7 @@
   let currentStep = 0;
   let firstRun = false;
   let built = false;
+  let mediaPlatform = 'posix';
   let answers = {
     goal: 'both',
     libraries: 'both',
@@ -194,6 +195,14 @@
 
   function pathsPage() {
     const tv = answers.libraries === 'both';
+    if (mediaPlatform === 'windows') {
+      const movieRoot = getLegacy('wMoviesRoot', '');
+      const tvRoot = getLegacy('wTvRoot', '');
+      return '<h2>Media paths</h2><div class="fs-v2-lead">Choose your actual Windows movie folder. Mapped drives and UNC network shares are supported; do not use /media or /tv here.</div><div class="fs-v2-grid2">'
+        + '<div class="fs-v2-section"><h3>Movies</h3><div class="fs-v2-field"><label>Windows Movies folder (e.g. X:\\ or D:\\Movies)</label><input class="fs-v2-input" data-mirror="wMoviesRoot" value="' + esc(movieRoot === '/media' ? '' : movieRoot) + '" placeholder="X:\\"></div></div>'
+        + (tv ? '<div class="fs-v2-section"><h3>TV Shows</h3><div class="fs-v2-field"><label>Windows TV folder</label><input class="fs-v2-input" data-mirror="wTvRoot" value="' + esc(tvRoot === '/tv' ? '' : tvRoot) + '" placeholder="D:\\TV Shows"></div></div>' : '')
+        + '</div><div class="fs-v2-callout">Censorarr must have read/write access to the selected folder. If a mapped letter is unavailable to this Windows account, use its UNC network path instead.</div>';
+    }
     return `<h2>Media paths</h2><div class="fs-v2-lead">Use the paths Censorarr sees inside its container. On Synology/Docker these are usually /media and /tv.</div><div class="fs-v2-grid2">
       <div class="fs-v2-section"><h3>Movies</h3><div class="fs-v2-field"><label>Movies path ${help('Usually /media. This is the container-side path, not the NAS host path.')}</label><input class="fs-v2-input" data-mirror="wMoviesRoot" value="${esc(getLegacy('wMoviesRoot','/media'))}"></div></div>
       ${tv ? `<div class="fs-v2-section"><h3>TV Shows</h3><div class="fs-v2-field"><label>TV path ${help('Usually /tv. This is the container-side path.')}</label><input class="fs-v2-input" data-mirror="wTvRoot" value="${esc(getLegacy('wTvRoot','/tv'))}"></div></div>` : ''}</div>
@@ -354,6 +363,14 @@
     notice('Saving settings and checking media access…');
     try {
       syncAnswers();
+      if (mediaPlatform === 'windows') {
+        const movies = getLegacy('wMoviesRoot', '').trim();
+        const tvRoot = getLegacy('wTvRoot', '').trim();
+        if (!movies || movies === '/media')
+          throw new Error('Select your actual Windows Movies folder (for example X:\\).');
+        if (answers.libraries === 'both' && (!tvRoot || tvRoot === '/tv'))
+          throw new Error('Select your actual Windows TV folder.');
+      }
       await saveAudioChoices();
       if (typeof window.finishSetupWizard !== 'function') throw new Error('Setup completion function is unavailable.');
       window.finishSetupWizard();
@@ -407,6 +424,10 @@
       firstRun = !!isFirstRun;
       currentStep = 0;
       await legacyOpen(isFirstRun);
+      try {
+        const response = await fetch('/api/media-roots', {credentials: 'same-origin'});
+        if (response.ok) mediaPlatform = (await response.json()).platform || 'posix';
+      } catch (_) { mediaPlatform = 'posix'; }
       if (!build()) return;
       seedAnswers();
       syncAnswers();

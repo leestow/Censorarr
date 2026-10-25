@@ -62,6 +62,7 @@ def install(pc, manual_processing) -> None:
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 timeout=max(5.0, timeout_seconds),
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
             )
         except subprocess.TimeoutExpired as exc:
             pc.logging.error("ffprobe timed out after %.0fs: %s", timeout_seconds, path)

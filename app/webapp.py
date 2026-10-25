@@ -72,7 +72,7 @@ def _docker_worker_start(self) -> None:
             return
         env = os.environ.copy()
         env.pop("DRY_RUN", None)
-        self.proc = core.subprocess.Popen(["python", "/app/censorarr_worker.py"], env=env)
+        self.proc = core.subprocess.Popen(["python", "/app/censorarr_worker.py"], env=env, start_new_session=True)
     if not self.monitor_thread or not self.monitor_thread.is_alive():
         self.monitor_thread = core.threading.Thread(
             target=self._monitor,

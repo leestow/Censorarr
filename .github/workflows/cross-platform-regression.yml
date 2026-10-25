@@ -1,0 +1,26 @@
+name: Cross-platform regression checks
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  syntax-and-control:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Compile Python sources
+        run: python -m compileall -q app windows linux tests
+      - name: Shared worker cancellation and log tests
+        run: python -m unittest discover -s tests -p "test_*.py" -v
+      - name: Check browser JavaScript syntax
+        run: |
+          node --check app/static/ui-setup-wizard-v2.js
+          node --check app/static/ui-audio-source-rules.js
+          node --check app/static/ui-final-fixes.js

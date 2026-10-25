@@ -258,7 +258,7 @@ def _prepare_modules():
                 cmd = [sys.executable, "--worker"]
             else:
                 cmd = [sys.executable, str(_RealPath(__file__).resolve()), "--worker"]
-            self.proc = subprocess.Popen(cmd, env=env, cwd=str(EXE_DIR))
+            self.proc = subprocess.Popen(cmd, env=env, cwd=str(EXE_DIR), start_new_session=True)
         if not self.monitor_thread or not self.monitor_thread.is_alive():
             self.monitor_thread = threading.Thread(
                 target=self._monitor, daemon=True, name="worker-supervisor"

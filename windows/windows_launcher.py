@@ -322,8 +322,28 @@ def _prepare_modules():
                 raise webapp.HTTPException(403, "Only paths inside the configured media roots are allowed")
         return resolved
 
+    # Both webapp.py routes and webapp_core.py settings/process routes must use
+    # the Windows resolver. Do not broaden browse/process access when changing roots.
     webapp._allowed_media_mounts = allowed_media_mounts_windows
     webapp.safe_media_path = safe_media_path_windows
+    webapp.core._allowed_media_mounts = allowed_media_mounts_windows
+    webapp.core.safe_media_path = safe_media_path_windows
+
+    def validate_new_media_root_windows(raw: str):
+        # This is called only by authenticated settings writes, never by browse or
+        # process endpoints. A user can explicitly configure a new mapped/UNC root.
+        p = _RealPath(str(raw or "").strip())
+        if not p.is_absolute():
+            raise webapp.HTTPException(400, "Choose an absolute Windows media folder path")
+        try:
+            p = p.resolve(strict=True)
+        except (OSError, RuntimeError):
+            raise webapp.HTTPException(404, "Media root does not exist or is inaccessible")
+        if not p.is_dir():
+            raise webapp.HTTPException(400, f"Media root is not a directory: {p}")
+        return p
+
+    webapp.core.validate_new_media_root = validate_new_media_root_windows
 
     # Spawn the worker as another copy of this same frozen executable.
     def supervisor_start_windows(self):
